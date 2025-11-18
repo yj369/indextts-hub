@@ -18,7 +18,10 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        "main-capability"
+      ]
     }
   },
   "bundle": {
@@ -31,5 +34,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://your-update-server/latest.json"
+      ],
+      "pubkey": ""
+    },
+    "process": {
+      "active": true
+    }
   }
 }
