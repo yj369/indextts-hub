@@ -1,11 +1,11 @@
 import "./App.css";
-import { Button } from "@/components/ui/button"
+import Wizard from "./pages/Wizard";
 
 
 function App() {
   return (
-      <div className='flex flex-wrap items-center gap-2 md:flex-row'>
-          <Button variant="outline">Button</Button>
+      <div className='App'>
+            <Wizard />
       </div>
   )
 }
