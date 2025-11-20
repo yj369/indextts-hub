@@ -1,6 +1,6 @@
 // src-tauri/src/commands/server.rs
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use tokio::process::{Command as TokioCommand, Child};
 use std::sync::{Mutex, MutexGuard};
 use tauri::{State, AppHandle, Emitter};
@@ -8,6 +8,7 @@ use tokio::io::{BufReader, AsyncBufReadExt};
 use tokio::time::sleep;
 use std::net::{TcpStream, SocketAddrV4, Ipv4Addr};
 use std::time::Duration;
+use std::path::Path;
 
 // Define a struct to hold the child process, to be managed by Tauri State
 pub struct ServerChildProcess(Mutex<Option<Child>>);
@@ -30,11 +31,12 @@ pub enum ServerStatus {
 
 #[tauri::command]
 pub async fn start_index_tts_server(
-    app_handle: AppHandle, // Add AppHandle
-    repo_dir: String,
-    hf_endpoint: Option<String>,
-    use_fp16: bool, // Add use_fp16
-    _use_deepspeed: bool, // Add use_deepspeed
+    app_handle: AppHandle,
+    target_dir: String,
+    host: String,
+    port: u16,
+    device: String,
+    precision: Option<String>,
     state: State<'_, ServerChildProcess>,
 ) -> Result<ServerStatus, String> {
     let mut guard = state.lock();
@@ -44,31 +46,29 @@ pub async fn start_index_tts_server(
 
     let mut command = TokioCommand::new("uv");
     command.arg("run")
-           .arg("webui.py")
-           .current_dir(&repo_dir)
-           .stdout(std::process::Stdio::piped()) // Capture stdout
-           .stderr(std::process::Stdio::piped()); // Capture stderr
+           .arg("app.py") // Assuming the entry point is app.py now
+           .arg("--host").arg(&host)
+           .arg("--port").arg(port.to_string())
+           .arg("--device").arg(&device)
+           .current_dir(&target_dir)
+           .stdout(std::process::Stdio::piped())
+           .stderr(std::process::Stdio::piped());
 
-    if let Some(endpoint) = hf_endpoint {
-        command.env("HF_ENDPOINT", endpoint);
+    if let Some(p) = precision {
+        if p == "fp16" {
+            command.arg("--precision").arg("fp16");
+        }
     }
 
-    // Integrate use_fp16 into the command arguments
-    if use_fp16 {
-        // The web search indicated '--half' is used for half precision
-        command.arg("--half");
-    }
-
-    // Deepspeed integration is not directly available via webui.py arguments as per investigation.
-    // If future versions of webui.py support it, this section would be updated.
+    // Pass HF_ENDPOINT if it's set in the environment or needed
+    // For now, let's assume it's handled by setup_index_tts_env or download_index_tts_model if required.
+    // If a direct HF_ENDPOINT is needed here, it should be passed from the frontend.
 
     let mut child = command.spawn().map_err(|e| format!("Failed to start server: {}", e))?;
 
-    // Get stdout and stderr
     let stdout = child.stdout.take().ok_or("Failed to capture stdout".to_string())?;
     let stderr = child.stderr.take().ok_or("Failed to capture stderr".to_string())?;
 
-    // Spawn tasks to read stdout and stderr and emit events
     tokio::spawn({
         let app_handle = app_handle.clone();
         async move {
@@ -79,7 +79,7 @@ pub async fn start_index_tts_server(
         }
     });
 
-    let app_handle_err = app_handle.clone(); // Clone for stderr task
+    let app_handle_err = app_handle.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
@@ -116,17 +116,111 @@ pub async fn stop_index_tts_server(state: State<'_, ServerChildProcess>) -> Resu
 #[tauri::command]
 pub async fn get_server_status(state: State<'_, ServerChildProcess>) -> Result<ServerStatus, String> {
     let mut guard = state.lock();
-    if let Some(child) = guard.as_mut() { // Use as_mut() to allow `try_wait`
+    if let Some(child) = guard.as_mut() {
         if child.try_wait().map_err(|e| format!("Error checking child status: {}", e))?.is_none() {
             Ok(ServerStatus::Running)
         } else {
-            *guard = None; // Child process has exited, clear the handle
+            *guard = None;
             Ok(ServerStatus::Stopped)
         }
     } else {
         Ok(ServerStatus::Stopped)
     }
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RepoUpdateInfo {
+    pub has_update: bool,
+    pub local_hash: String,
+    pub remote_hash: String,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, String> {
+    let repo_path = Path::new(&target_dir);
+    if !repo_path.exists() || !repo_path.is_dir() {
+        return Err("Repository directory does not exist.".to_string());
+    }
+
+    // Fetch latest changes from remote
+    let fetch_output = TokioCommand::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .arg("fetch")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute git fetch: {}", e))?;
+
+    if !fetch_output.status.success() {
+        return Err(format!("Git fetch failed: {}", String::from_utf8_lossy(&fetch_output.stderr)));
+    }
+
+    // Get local HEAD commit hash
+    let local_hash_output = TokioCommand::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .args(["log", "-n", "1", "--pretty=format:%H"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to get local hash: {}", e))?;
+
+    if !local_hash_output.status.success() {
+        return Err(format!("Failed to get local hash: {}", String::from_utf8_lossy(&local_hash_output.stderr)));
+    }
+    let local_hash = String::from_utf8_lossy(&local_hash_output.stdout).trim().to_string();
+
+    // Get remote HEAD commit hash for the current branch
+    let remote_hash_output = TokioCommand::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .args(["log", "-n", "1", "--pretty=format:%H", "origin/main"]) // Assuming 'main' branch
+        .output()
+        .await
+        .map_err(|e| format!("Failed to get remote hash: {}", e))?;
+
+    if !remote_hash_output.status.success() {
+        return Err(format!("Failed to get remote hash: {}", String::from_utf8_lossy(&remote_hash_output.stderr)));
+    }
+    let remote_hash = String::from_utf8_lossy(&remote_hash_output.stdout).trim().to_string();
+
+    let has_update = local_hash != remote_hash;
+    let message = if has_update {
+        "New version available.".to_string()
+    } else {
+        "Already up to date.".to_string()
+    };
+
+    Ok(RepoUpdateInfo {
+        has_update,
+        local_hash,
+        remote_hash,
+        message,
+    })
+}
+
+#[tauri::command]
+pub async fn pull_repo(target_dir: String) -> Result<String, String> {
+    let repo_path = Path::new(&target_dir);
+    if !repo_path.exists() || !repo_path.is_dir() {
+        return Err("Repository directory does not exist.".to_string());
+    }
+
+    let pull_output = TokioCommand::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .arg("pull")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute git pull: {}", e))?;
+
+    if !pull_output.status.success() {
+        return Err(format!("Git pull failed: {}", String::from_utf8_lossy(&pull_output.stderr)));
+    }
+
+    Ok("SUCCESS".to_string())
+}
+
 
 fn port_is_reachable(port: u16) -> bool {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);

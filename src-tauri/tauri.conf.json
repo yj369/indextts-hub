@@ -14,11 +14,12 @@
       {
         "title": "indextts-hub",
         "width": 800,
-        "height": 600,
+        "height": 720,
         "minWidth": 800,
-        "minHeight": 600,
+        "minHeight": 720,
         "hiddenTitle": true,
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Transparent",
+        "resizable": false
       }
     ],
     "security": {
@@ -40,6 +41,10 @@
     ]
   },
   "plugins": {
+    "shell": {
+      "open": true
+    },
+    "dialog": true,
     "updater": {
       "active": true,
       "endpoints": [
