@@ -1,9 +1,13 @@
 // src-tauri/src/commands/index_tts.rs
 
 use serde::{Serialize, Deserialize};
-use tokio::process::Command;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 #[tauri::command]
 pub async fn clone_index_tts_repo(target_dir: String) -> Result<String, String> {
@@ -20,12 +24,12 @@ pub async fn clone_index_tts_repo(target_dir: String) -> Result<String, String> 
             .arg("--is-inside-work-tree")
             .output()
             .await
-            .map_or(false, |output| output.status.success());
+            .map_err(|e| format!("Failed to check if {} is a git repo: {}", target_dir, e))?;
 
-        if is_git_repo {
-            // If it's a git repo, assume it's the correct one for now and proceed with LFS.
-            // In a more robust implementation, we might check the remote origin.
-            return install_lfs_and_pull(&target_dir).await;
+        if is_git_repo.status.success() {
+            // If it's a git repo, assume it's the correct one for now and return success.
+            // Further checks (e.g., remote origin) can be added if needed.
+            return Ok("SUCCESS".to_string());
         } else {
             return Err(format!("Target directory '{}' exists but is not a git repository.", target_dir));
         }
@@ -42,8 +46,40 @@ pub async fn clone_index_tts_repo(target_dir: String) -> Result<String, String> 
         return Err(format!("Git clone failed: {}", String::from_utf8_lossy(&clone_output.stderr)));
     }
 
-    install_lfs_and_pull(&target_dir).await
+    Ok("SUCCESS".to_string())
 }
+
+#[tauri::command]
+pub async fn init_git_lfs(target_dir: String) -> Result<String, String> {
+    let lfs_install_output = Command::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .args(["lfs", "install"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute git lfs install: {}", e))?;
+
+    if !lfs_install_output.status.success() {
+        return Err(format!("Git LFS install failed: {}", String::from_utf8_lossy(&lfs_install_output.stderr)));
+    }
+
+    // After install, we should also pull the LFS files to make sure they are present
+    let lfs_pull_output = Command::new("git")
+        .arg("-C")
+        .arg(&target_dir)
+        .args(["lfs", "pull"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute git lfs pull: {}", e))?;
+
+    if !lfs_pull_output.status.success() {
+        return Err(format!("Git LFS pull failed: {}", String::from_utf8_lossy(&lfs_pull_output.stderr)));
+    }
+
+
+    Ok("SUCCESS".to_string())
+}
+
 
 #[tauri::command]
 pub fn check_index_tts_repo(repo_dir: Option<String>) -> Result<bool, String> {
@@ -69,45 +105,16 @@ pub fn check_index_tts_repo(repo_dir: Option<String>) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn install_lfs_and_pull(repo_dir: &str) -> Result<String, String> {
-    // Git LFS install
-    let lfs_install_output = Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["lfs", "install"])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to execute git lfs install: {}", e))?;
-
-    if !lfs_install_output.status.success() {
-        return Err(format!("Git LFS install failed: {}", String::from_utf8_lossy(&lfs_install_output.stderr)));
-    }
-
-    // Git LFS pull
-    let lfs_pull_output = Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["lfs", "pull"])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to execute git lfs pull: {}", e))?;
-
-    if !lfs_pull_output.status.success() {
-        return Err(format!("Git LFS pull failed: {}", String::from_utf8_lossy(&lfs_pull_output.stderr)));
-    }
-
-    Ok(format!("IndexTTS2 repository cloned and LFS files pulled successfully to {}", repo_dir))
-}
 
 #[tauri::command]
-pub async fn setup_index_tts_env(repo_dir: String, pypi_mirror: Option<String>) -> Result<String, String> {
+pub async fn setup_index_tts_env(target_dir: String, network_environment: String) -> Result<String, String> {
     let mut command = Command::new("uv");
     command.arg("sync")
            .arg("--all-extras")
-           .current_dir(&repo_dir);
+           .current_dir(&target_dir);
 
-    if let Some(mirror) = pypi_mirror {
-        command.arg("--default-index").arg(mirror);
+    if network_environment == "mainland_china" {
+        command.arg("--index-url").arg("https://pypi.tuna.tsinghua.edu.cn/simple");
     }
 
     let output = command.output()
@@ -118,7 +125,7 @@ pub async fn setup_index_tts_env(repo_dir: String, pypi_mirror: Option<String>) 
         return Err(format!("uv sync failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    Ok(format!("IndexTTS2 environment set up successfully in {}", repo_dir))
+    Ok("SUCCESS".to_string())
 }
 
 #[tauri::command]
@@ -140,22 +147,37 @@ pub async fn install_hf_or_modelscope_tools(repo_dir: String, tool_name: String)
     Ok(format!("{} installed successfully using uv tool.", tool_name))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ModelSource {
     HuggingFace,
     ModelScope,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ModelDownloadLogEvent {
+    pub stream: String,
+    pub line: String,
+}
+
 #[tauri::command]
 pub async fn download_index_tts_model(
-    repo_dir: String,
-    model_source: ModelSource,
-    use_hf_mirror: bool,
+    app_handle: AppHandle,
+    target_dir: String,
+    network_environment: String,
     model_save_path: Option<String>,
 ) -> Result<String, String> {
+    let model_source = if network_environment == "mainland_china" {
+        ModelSource::ModelScope
+    } else {
+        ModelSource::HuggingFace
+    };
+
+    let use_hf_mirror = network_environment == "mainland_china";
+
+
     let mut command_args: Vec<&str> = Vec::new();
     let mut command = Command::new("uv");
-    command.current_dir(&repo_dir);
+    command.current_dir(&target_dir);
 
     match model_source {
         ModelSource::HuggingFace => {
@@ -182,17 +204,73 @@ pub async fn download_index_tts_model(
         },
     }
     command.args(&command_args);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
 
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to execute model download command: {}", e))?;
 
-    let output = command.output()
-                      .await
-                      .map_err(|e| format!("Failed to execute model download command: {}", e))?;
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    const EVENT_NAME: &str = "model-download-log";
 
-    if !output.status.success() {
-        return Err(format!("Model download failed: {}", String::from_utf8_lossy(&output.stderr)));
+    if let Some(stdout) = child.stdout.take() {
+        let handle_clone = app_handle.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                let payload = ModelDownloadLogEvent {
+                    stream: "stdout".to_string(),
+                    line,
+                };
+                let _ = handle_clone.emit(EVENT_NAME, &payload);
+            }
+        });
     }
 
-    Ok(format!("IndexTTS2 model downloaded successfully from {:?}", model_source))
+    if let Some(stderr) = child.stderr.take() {
+        let handle_clone = app_handle.clone();
+        let stderr_accumulator = stderr_lines.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                {
+                    let mut buffer = stderr_accumulator
+                        .lock()
+                        .expect("stderr accumulator poisoned");
+                    buffer.push(line.clone());
+                }
+
+                let payload = ModelDownloadLogEvent {
+                    stream: "stderr".to_string(),
+                    line,
+                };
+                let _ = handle_clone.emit(EVENT_NAME, &payload);
+            }
+        });
+    }
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed to wait for model download command: {}", e))?;
+
+    if !status.success() {
+        let stderr_output = {
+            let buffer = stderr_lines
+                .lock()
+                .expect("stderr accumulator poisoned");
+            buffer.join("\n")
+        };
+
+        if stderr_output.is_empty() {
+            return Err("Model download failed with no additional output. Please check the logs.".to_string());
+        } else {
+            return Err(format!("Model download failed: {}", stderr_output));
+        }
+    }
+
+    Ok("SUCCESS".to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
