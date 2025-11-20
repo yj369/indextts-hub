@@ -1,21 +1,24 @@
-// src/components/MagicCard.tsx
 import React, { useRef, useState, MouseEvent, ReactNode } from 'react';
-import { cn } from '../lib/utils'; // Assuming cn is a utility for class names
+import { cn } from '../lib/utils';
 
 interface MagicCardProps {
     children: ReactNode;
     className?: string;
-    onClick?: (event: MouseEvent<HTMLDivElement>) => void; // Add onClick prop
+    onClick?: (event: MouseEvent<HTMLDivElement>) => void;
+    gradientColor?: string;
 }
 
-const MagicCard: React.FC<MagicCardProps> = ({ children, className, onClick }) => { // Destructure onClick
+const MagicCard: React.FC<MagicCardProps> = ({
+                                                 children,
+                                                 className,
+                                                 onClick,
+                                                 gradientColor = "rgba(139, 92, 246, 0.15)" // Default to Purple
+                                             }) => {
     const cardRef = useRef<HTMLDivElement>(null);
     const [mousePosition, setMousePosition] = useState<{ x: number, y: number } | null>(null);
 
     const handleMouseMove = (e: MouseEvent) => {
         if (!cardRef.current) return;
-
-        // Spotlight effect
         const rect = cardRef.current.getBoundingClientRect();
         setMousePosition({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
@@ -24,25 +27,32 @@ const MagicCard: React.FC<MagicCardProps> = ({ children, className, onClick }) =
         setMousePosition(null);
     };
 
-    const cardStyle: React.CSSProperties = {
-        '--mouse-x': mousePosition ? `${mousePosition.x}px` : '0px',
-        '--mouse-y': mousePosition ? `${mousePosition.y}px` : '0px',
-    } as React.CSSProperties; // Type assertion needed for custom CSS variables
-
     return (
         <div
             ref={cardRef}
             className={cn(
-                "magic-card relative z-0 overflow-hidden rounded-lg border border-border bg-background transition-all duration-300 ease-out",
-                mousePosition !== null && "before:opacity-100 after:opacity-100", // Only show spotlight if mouse is over
+                "group relative overflow-hidden rounded-2xl border border-white/10 bg-[#0a0a0a] transition-all duration-300",
+                "hover:border-white/20 hover:shadow-2xl hover:translate-y-[-2px]",
                 className
             )}
-            style={cardStyle}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
-            onClick={onClick} // Pass onClick to the div
+            onClick={onClick}
         >
-            {children}
+            {/* Spotlight Gradient */}
+            <div
+                className="pointer-events-none absolute -inset-px opacity-0 transition duration-300 group-hover:opacity-100"
+                style={{
+                    background: mousePosition
+                        ? `radial-gradient(600px circle at ${mousePosition.x}px ${mousePosition.y}px, ${gradientColor}, transparent 40%)`
+                        : '',
+                }}
+            />
+
+            {/* Content */}
+            <div className="relative z-10 h-full">
+                {children}
+            </div>
         </div>
     );
 };

@@ -5,8 +5,8 @@ import { Button } from '../components/ui/button';
 import LogViewer from '../components/LogViewer';
 import { ModelSource } from '../types/tauri';
 import MagicCard from '../components/MagicCard';
-import CipherRevealText from '../components/CipherRevealText';
-import { Loader2, Play, Download as DownloadIcon, CheckCircle, XCircle, CloudDownload, AlertCircle } from 'lucide-react';
+import { Loader2, Download, Check, Cloud, Database, AlertTriangle } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface ModelDownloadStepProps {
     onNext: (data: ModelDownloadStepData) => void;
@@ -37,6 +37,7 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
         setDownloadLogs((prev) => [...prev, message]);
     };
 
+    // ... (Logic functions unchanged, assumed handleInstallTools, handleDownloadModel exist)
     const ensureRepoConfigured = () => {
         if (!indexTtsRepoDir) {
             const msg = "IndexTTS repository directory is not set. Please finish the previous setup step first.";
@@ -48,14 +49,10 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
     };
 
     const handleInstallTools = async () => {
-        if (!ensureRepoConfigured()) {
-            return;
-        }
-
+        if (!ensureRepoConfigured()) return;
         addLog("Installing model download tools...");
         setError(null);
         setDownloading(true);
-
         try {
             addLog("Installing huggingface-hub[cli,hf_xet]...");
             const hfResult: string = await invoke('install_hf_or_modelscope_tools', {
@@ -72,11 +69,10 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
             });
             addLog(msResult);
             setMsToolInstalled(true);
-
-            addLog("Model download tools installed successfully.");
+            addLog("Tools installed successfully.");
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error installing model download tools: ${errMsg}`);
+            addLog(`Error: ${errMsg}`);
             setError(errMsg);
         } finally {
             setDownloading(false);
@@ -84,27 +80,20 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
     };
 
     const handleDownloadModel = async () => {
-        if (!ensureRepoConfigured()) {
-            return;
-        }
-
+        if (!ensureRepoConfigured()) return;
         setDownloading(true);
         setError(null);
         setDownloadLogs([]);
 
         if (!hfToolInstalled || !msToolInstalled) {
-            // Attempt to install if not already
             await handleInstallTools();
-            // Re-check after attempt
             if (!hfToolInstalled || !msToolInstalled) {
-                setError("Failed to install model download tools. Cannot proceed with download.");
+                setError("Failed to install tools.");
                 setDownloading(false);
                 return;
             }
         }
-
-        addLog(`Attempting to download model from ${selectedModelSource === ModelSource.HuggingFace ? 'HuggingFace' : 'ModelScope'}...`);
-
+        addLog(`Downloading from ${selectedModelSource}...`);
         const useHfMirror = networkEnvironment === 'mainland_china' && selectedModelSource === ModelSource.HuggingFace;
 
         try {
@@ -116,159 +105,99 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
             });
             addLog(downloadResult);
             setModelDownloaded(true);
-            addLog("Model downloaded successfully!");
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error downloading model: ${errMsg}`);
+            addLog(`Error: ${errMsg}`);
             setError(errMsg);
         } finally {
             setDownloading(false);
         }
     };
 
-
     const handleNext = () => {
         onNext({ hfToolInstalled, msToolInstalled, modelDownloaded, downloadLogs, selectedModelSource, modelSavePath });
     };
 
-    const repoReady = Boolean(indexTtsRepoDir);
-    const installToolsButtonDisabled = downloading || !repoReady || (hfToolInstalled && msToolInstalled);
-    const downloadModelButtonDisabled = downloading || !repoReady || !hfToolInstalled || !msToolInstalled;
     const isNextDisabled = downloading || !modelDownloaded;
-
 
     return (
         <div className="space-y-6">
-            <div className="text-center space-y-2">
-                <CipherRevealText text="下载模型" className="text-2xl font-semibold" interval={80} />
-                <p className="text-sm text-foreground/60">选择来源并保存到仓库。</p>
-            </div>
+            <div className="grid gap-6 md:grid-cols-5">
+                {/* Configuration Side */}
+                <div className="md:col-span-2 space-y-4">
+                    <MagicCard className="p-4 space-y-4">
+                        <div className="flex items-center gap-2 text-accent mb-2">
+                            <Cloud className="w-4 h-4" />
+                            <h3 className="text-xs font-bold uppercase tracking-widest">Model Source</h3>
+                        </div>
 
-            {!repoReady && (
-                <MagicCard className="p-4 text-warning border-warning bg-warning/10 flex items-center gap-2 text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>先完成仓库配置再继续。</span>
-                </MagicCard>
-            )}
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                onClick={() => setSelectedModelSource(ModelSource.HuggingFace)}
+                                className={cn(
+                                    "p-3 rounded-lg border text-xs font-bold transition-all",
+                                    selectedModelSource === ModelSource.HuggingFace
+                                        ? "bg-primary/20 border-primary text-white shadow-[0_0_10px_rgba(139,92,246,0.3)]"
+                                        : "bg-black/40 border-white/10 text-gray-500 hover:bg-white/5"
+                                )}
+                            >
+                                HuggingFace
+                            </button>
+                            <button
+                                onClick={() => setSelectedModelSource(ModelSource.ModelScope)}
+                                className={cn(
+                                    "p-3 rounded-lg border text-xs font-bold transition-all",
+                                    selectedModelSource === ModelSource.ModelScope
+                                        ? "bg-secondary/20 border-secondary text-white shadow-[0_0_10px_rgba(45,212,191,0.3)]"
+                                        : "bg-black/40 border-white/10 text-gray-500 hover:bg-white/5"
+                                )}
+                            >
+                                ModelScope
+                            </button>
+                        </div>
 
-            <MagicCard className="p-4 space-y-3">
-                <div className="flex items-center justify-between text-sm">
-                    <h3 className="font-semibold text-foreground/80 uppercase tracking-wide">下载工具</h3>
-                    <Button onClick={handleInstallTools} disabled={installToolsButtonDisabled} className="px-4" size="sm">
-                        {downloading && installToolsButtonDisabled ? (
-                            <span className="flex items-center">
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 安装中
-                            </span>
-                        ) : (
-                            <span className="flex items-center">
-                                <Play className="w-4 h-4 mr-2" /> 安装工具
-                            </span>
-                        )}
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-mono text-gray-500 uppercase">Local Directory</label>
+                            <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded-lg p-2">
+                                <Database className="w-3 h-3 text-gray-500" />
+                                <input
+                                    type="text"
+                                    value={modelSavePath}
+                                    onChange={(e) => setModelSavePath(e.target.value)}
+                                    className="bg-transparent border-none text-xs font-mono text-white w-full focus:ring-0"
+                                />
+                            </div>
+                        </div>
+                    </MagicCard>
+
+                    <Button
+                        onClick={handleDownloadModel}
+                        disabled={downloading}
+                        className="w-full py-6 text-base relative overflow-hidden group"
+                        variant={modelDownloaded ? "secondary" : "default"}
+                    >
+                        <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.1)_50%,transparent_75%)] bg-[length:250%_250%] animate-[shimmer_2s_infinite] border-t border-white/20"></div>
+                        <span className="relative flex items-center gap-2">
+                            {downloading ? <Loader2 className="animate-spin" /> : modelDownloaded ? <Check /> : <Download />}
+                            {downloading ? 'DOWNLOADING...' : modelDownloaded ? 'DOWNLOAD COMPLETE' : 'START DOWNLOAD'}
+                         </span>
                     </Button>
                 </div>
-                <ul className="list-none space-y-2 text-sm">
-                    <li className="flex justify-between items-center">
-                        <span>HuggingFace</span>
-                        {hfToolInstalled ? (
-                            <span className="flex items-center text-success">
-                                <CheckCircle className="w-4 h-4 mr-2" /> 已安装
-                            </span>
-                        ) : (
-                            <span className="flex items-center text-destructive">
-                                <XCircle className="w-4 h-4 mr-2" /> 未安装
-                            </span>
-                        )}
-                    </li>
-                    <li className="flex justify-between items-center">
-                        <span>ModelScope</span>
-                        {msToolInstalled ? (
-                            <span className="flex items-center text-success">
-                                <CheckCircle className="w-4 h-4 mr-2" /> 已安装
-                            </span>
-                        ) : (
-                            <span className="flex items-center text-destructive">
-                                <XCircle className="w-4 h-4 mr-2" /> 未安装
-                            </span>
-                        )}
-                    </li>
-                </ul>
-            </MagicCard>
 
-            <MagicCard className="p-4 space-y-4">
-                <h3 className="text-sm font-semibold text-foreground/80 uppercase tracking-wide flex items-center gap-2">
-                    <CloudDownload className="w-4 h-4 text-secondary" /> 来源与路径
-                </h3>
-                <div className="space-y-4 text-sm">
-                    <div>
-                        <label htmlFor="model-source" className="block text-foreground/80 mb-1">
-                            来源
-                        </label>
-                        <select
-                            id="model-source"
-                            className="w-full rounded-md border border-border bg-input px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-                            value={selectedModelSource}
-                            onChange={(e) => setSelectedModelSource(e.target.value as ModelSource)}
-                            disabled={downloading}
-                        >
-                            <option value={ModelSource.HuggingFace}>HuggingFace（海外）</option>
-                            <option value={ModelSource.ModelScope}>ModelScope（国内）</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label htmlFor="model-save-path" className="block text-foreground/80 mb-1">
-                            保存目录（相对仓库）
-                        </label>
-                        <input
-                            id="model-save-path"
-                            type="text"
-                            placeholder="如 checkpoints"
-                            className="w-full rounded-md border border-border bg-input px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-                            value={modelSavePath}
-                            onChange={(e) => setModelSavePath(e.target.value)}
-                            disabled={downloading}
-                        />
-                         <p className="text-xs text-foreground/60 mt-1">
-                            {indexTtsRepoDir}/{modelSavePath}
-                        </p>
-                    </div>
+                {/* Logs Side */}
+                <div className="md:col-span-3 h-full">
+                    <LogViewer logs={downloadLogs} className="h-full min-h-[300px]" title="TRANSFER LOG" />
                 </div>
-            </MagicCard>
-
-            <div className="flex justify-center">
-                <Button onClick={handleDownloadModel} disabled={downloadModelButtonDisabled} className="px-6">
-                    {downloading && downloadModelButtonDisabled ? (
-                        <span className="flex items-center">
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 下载中
-                        </span>
-                    ) : (
-                        <span className="flex items-center">
-                            <DownloadIcon className="w-4 h-4 mr-2" /> 下载
-                        </span>
-                    )}
-                </Button>
             </div>
 
-            {modelDownloaded && (
-                <MagicCard className="p-4 bg-success/10 border-success/60 text-success flex items-center gap-2 text-sm">
-                    <CheckCircle className="w-4 h-4" />
-                    <span>模型就绪</span>
-                </MagicCard>
-            )}
-
             {error && (
-                <MagicCard className="p-4 bg-destructive/10 border-destructive/50 text-destructive flex items-center gap-2 text-sm">
-                    <XCircle className="w-4 h-4" />
-                    <span>{error}</span>
-                </MagicCard>
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" /> {error}
+                </div>
             )}
 
-            {downloadLogs.length > 0 && (
-                <LogViewer logs={downloadLogs} />
-            )}
-
-            <div className="flex justify-end pt-4">
-                <Button onClick={handleNext} disabled={isNextDisabled}>
+            <div className="flex justify-end pt-2">
+                <Button onClick={handleNext} disabled={isNextDisabled} className="px-8">
                     继续
                 </Button>
             </div>
