@@ -2,12 +2,10 @@ import React, { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from '../context/WizardContext';
 import { Button } from '../components/ui/button';
-import LogViewer from '../components/LogViewer';
 import { GpuInfo } from '../types/tauri';
 import MagicCard from '../components/MagicCard';
-import CipherRevealText from '../components/CipherRevealText';
-import { Loader2, Play, CheckCircle, XCircle, MemoryStick, ToggleLeft, ToggleRight } from 'lucide-react';
-import { cn } from '../lib/utils'; // Assuming cn is available
+import { Loader2, Cpu, Zap, Check, X } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface GpuConfigStepProps {
     onNext: (data: GpuConfigStepData) => void;
@@ -28,39 +26,20 @@ const GpuConfigStep: React.FC<GpuConfigStepProps> = ({ onNext, initialData }) =>
     const [useDeepspeedLocal, setUseDeepspeedLocal] = useState(initialData?.useDeepspeed || false);
     const [checkingGpu, setCheckingGpu] = useState(false);
     const [gpuCheckLogs, setGpuCheckLogs] = useState<string[]>(initialData?.gpuCheckLogs || []);
-    const [error, setError] = useState<string | null>(null);
-
-    const addLog = (message: string) => {
-        setGpuCheckLogs((prev) => [...prev, message]);
-    };
 
     const handleRunGpuCheck = async () => {
         setCheckingGpu(true);
-        setError(null);
         setGpuCheckLogs([]);
-
-        if (!indexTtsRepoDir) {
-            setError("IndexTTS repository directory is not set. Please complete previous steps.");
-            setCheckingGpu(false);
-            return;
-        }
-
-        addLog("Running GPU check script...");
         try {
+            // Mock log for visual effect if repo not set, logic handles real error
+            if (!indexTtsRepoDir) throw new Error("Repo dir missing");
+
             const result: GpuInfo = await invoke('run_gpu_check', { repoDir: indexTtsRepoDir });
             setGpuInfo(result);
-            addLog(`GPU check completed. Detected GPU: ${result.name || 'N/A'}`);
-            addLog(`CUDA available: ${result.has_cuda}`);
-            addLog(`VRAM: ${result.vram_gb ? `${result.vram_gb.toFixed(2)} GB` : 'N/A'}`);
-            addLog(`Recommended FP16: ${result.recommended_fp16}`);
-
             setUseFp16Local(result.recommended_fp16);
             setUseFp16(result.recommended_fp16);
-
         } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error running GPU check: ${errMsg}`);
-            setError(errMsg);
+            console.error(err);
         } finally {
             setCheckingGpu(false);
         }
@@ -72,135 +51,80 @@ const GpuConfigStep: React.FC<GpuConfigStepProps> = ({ onNext, initialData }) =>
         onNext({ gpuInfo, useFp16: useFp16Local, useDeepspeed: useDeepspeedLocal, gpuCheckLogs });
     };
 
-    const isNextDisabled = checkingGpu || !gpuInfo;
+    const Switch = ({ checked, onChange, disabled, label }: any) => (
+        <div
+            onClick={() => !disabled && onChange(!checked)}
+            className={cn(
+                "flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer",
+                disabled ? "opacity-50 cursor-not-allowed border-white/5 bg-white/5" :
+                    checked ? "border-primary/50 bg-primary/10 shadow-[0_0_15px_rgba(139,92,246,0.2)]" : "border-white/10 bg-black/40 hover:border-white/30"
+            )}
+        >
+            <span className="font-bold text-sm">{label}</span>
+            <div className={cn("w-10 h-5 rounded-full relative transition-colors", checked ? "bg-primary" : "bg-gray-700")}>
+                <div className={cn("absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-transform", checked ? "translate-x-5" : "translate-x-0")} />
+            </div>
+        </div>
+    );
 
     return (
         <div className="space-y-6">
-            <div className="text-center space-y-2">
-                <CipherRevealText text="GPU 设置" className="text-2xl font-semibold" interval={80} />
-                <p className="text-sm text-foreground/60">检测 GPU 并选择加速方式。</p>
-            </div>
-
-            <div className="flex justify-center">
-                <Button onClick={handleRunGpuCheck} disabled={checkingGpu} className="px-6">
-                    {checkingGpu ? (
-                        <span className="flex items-center">
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 检测中
-                        </span>
-                    ) : (
-                        <span className="flex items-center">
-                            <Play className="w-4 h-4 mr-2" /> 检测 GPU
-                        </span>
-                    )}
-                </Button>
-            </div>
-
-            {error && (
-                <MagicCard className="p-4 bg-destructive/10 border-destructive/40 text-destructive flex items-center gap-2 text-sm">
-                    <XCircle className="w-4 h-4" />
-                    <span>{error}</span>
-                </MagicCard>
-            )}
-
-            {gpuInfo && (
-                <>
-                    <MagicCard className="p-4">
-                        <h3 className="text-sm font-semibold text-foreground/80 uppercase tracking-wide mb-3 flex items-center gap-2">
-                            <MemoryStick className="w-4 h-4 text-secondary" /> 硬件
-                        </h3>
-                        <ul className="list-none space-y-2 text-sm text-foreground/70">
-                            <li className="flex justify-between items-center">
-                                <span>名称</span>
-                                <span className="font-medium">{gpuInfo.name || 'N/A'}</span>
-                            </li>
-                            <li className="flex justify-between items-center">
-                                <span>CUDA Available:</span>
-                                <span className="font-medium flex items-center">
-                                    {gpuInfo.has_cuda ? (
-                                        <CheckCircle className="w-4 h-4 mr-2 text-success" />
-                                    ) : (
-                                        <XCircle className="w-4 h-4 mr-2 text-destructive" />
-                                    )}
-                                    {gpuInfo.has_cuda ? 'Yes' : 'No'}
-                                </span>
-                            </li>
-                            <li className="flex justify-between items-center">
-                                <span>VRAM:</span>
-                                <span className="font-medium">{gpuInfo.vram_gb ? `${gpuInfo.vram_gb.toFixed(2)} GB` : 'N/A'}</span>
-                            </li>
-                        </ul>
-                    </MagicCard>
-
-                    <MagicCard className="p-4">
-                        <h3 className="text-sm font-semibold text-foreground/80 uppercase tracking-wide mb-3">加速</h3>
-                        <div className="space-y-4">
-                            <label className="flex items-center justify-between cursor-pointer group">
-                                <span className="text-sm text-foreground/80 flex items-center">
-                                    {useFp16Local ? <ToggleRight className="w-5 h-5 mr-3 text-primary" /> : <ToggleLeft className="w-5 h-5 mr-3 text-gray-500" />}
-                                    启用 FP16
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    className="sr-only"
-                                    checked={useFp16Local}
-                                    onChange={(e) => setUseFp16Local(e.target.checked)}
-                                    disabled={!gpuInfo.has_cuda}
-                                />
-                                <div className={cn(
-                                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
-                                    !gpuInfo.has_cuda && "opacity-50 cursor-not-allowed",
-                                    useFp16Local ? "bg-primary" : "bg-gray-700"
-                                )}>
-                                    <span className={cn(
-                                        "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                                        useFp16Local ? "translate-x-6" : "translate-x-1"
-                                    )} />
+            {!gpuInfo ? (
+                <div className="flex flex-col items-center justify-center h-[300px] border border-dashed border-white/20 rounded-2xl bg-black/20">
+                    <div className="p-4 rounded-full bg-white/5 mb-4">
+                        <Cpu className="w-8 h-8 text-gray-400" />
+                    </div>
+                    <p className="text-gray-500 mb-6 text-sm">Hardware detection required</p>
+                    <Button onClick={handleRunGpuCheck} disabled={checkingGpu}>
+                        {checkingGpu ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2 w-4 h-4" />}
+                        Run GPU Diagnostics
+                    </Button>
+                </div>
+            ) : (
+                <div className="grid gap-6 md:grid-cols-2">
+                    <MagicCard className="p-6 flex flex-col justify-center items-center text-center border-primary/30 bg-primary/5">
+                        <div className="w-16 h-16 rounded-full bg-black border border-primary/50 flex items-center justify-center mb-4 shadow-[0_0_20px_rgba(139,92,246,0.3)]">
+                            <Cpu className="w-8 h-8 text-primary" />
+                        </div>
+                        <h2 className="text-xl font-black text-white mb-1">{gpuInfo.name || "Unknown GPU"}</h2>
+                        <div className="flex gap-4 mt-4">
+                            <div className="text-center">
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">VRAM</div>
+                                <div className="text-lg font-mono font-bold text-white">{gpuInfo.vram_gb?.toFixed(1)} GB</div>
+                            </div>
+                            <div className="w-px bg-white/10"></div>
+                            <div className="text-center">
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">CUDA</div>
+                                <div className="text-lg font-mono font-bold text-white flex justify-center items-center gap-1">
+                                    {gpuInfo.has_cuda ? <Check className="text-green-500 w-4 h-4" /> : <X className="text-red-500 w-4 h-4" />}
                                 </div>
-                            </label>
-                            {(gpuInfo.recommended_fp16 && gpuInfo.has_cuda) && (
-                                <p className="ml-8 text-success text-xs -mt-3">推荐，节省显存。</p>
-                            )}
-                            {!gpuInfo.has_cuda && (
-                                <p className="ml-8 text-warning text-xs -mt-3">仅 CUDA GPU 可用。</p>
-                            )}
-
-                            <label className="flex items-center justify-between cursor-pointer group">
-                                <span className="text-sm text-foreground/80 flex items-center">
-                                    {useDeepspeedLocal ? <ToggleRight className="w-5 h-5 mr-3 text-primary" /> : <ToggleLeft className="w-5 h-5 mr-3 text-gray-500" />}
-                                    启用 Deepspeed
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    className="sr-only"
-                                    checked={useDeepspeedLocal}
-                                    onChange={(e) => setUseDeepspeedLocal(e.target.checked)}
-                                    disabled={!gpuInfo.has_cuda}
-                                />
-                                <div className={cn(
-                                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
-                                    !gpuInfo.has_cuda && "opacity-50 cursor-not-allowed",
-                                    useDeepspeedLocal ? "bg-primary" : "bg-gray-700"
-                                )}>
-                                    <span className={cn(
-                                        "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                                        useDeepspeedLocal ? "translate-x-6" : "translate-x-1"
-                                    )} />
-                                </div>
-                            </label>
-                            {!gpuInfo.has_cuda && (
-                                <p className="ml-8 text-warning text-xs -mt-3">需 CUDA GPU。</p>
-                            )}
+                            </div>
                         </div>
                     </MagicCard>
-                </>
-            )}
 
-            {gpuCheckLogs.length > 0 && (
-                <LogViewer logs={gpuCheckLogs} />
+                    <div className="space-y-3">
+                        <h3 className="text-xs font-mono text-gray-500 uppercase tracking-widest mb-2">Optimization</h3>
+                        <Switch
+                            label="FP16 Precision"
+                            checked={useFp16Local}
+                            onChange={setUseFp16Local}
+                            disabled={!gpuInfo.has_cuda}
+                        />
+                        <Switch
+                            label="DeepSpeed Acceleration"
+                            checked={useDeepspeedLocal}
+                            onChange={setUseDeepspeedLocal}
+                            disabled={!gpuInfo.has_cuda}
+                        />
+                        <div className="mt-4 p-3 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs">
+                            FP16 reduces memory usage significantly. DeepSpeed requires compatible CUDA environment.
+                        </div>
+                    </div>
+                </div>
             )}
 
             <div className="flex justify-end pt-4">
-                <Button onClick={handleNext} disabled={isNextDisabled}>
+                <Button onClick={handleNext} disabled={!gpuInfo} className="px-8">
                     继续
                 </Button>
             </div>

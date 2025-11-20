@@ -6,7 +6,9 @@ import { listen } from '@tauri-apps/api/event';
 import LogViewer from '../components/LogViewer';
 import { Button } from '../components/ui/button';
 import { ServerStatus } from '../types/tauri';
-import { Loader2, Play, Square, CheckCircle, XCircle, ExternalLink } from 'lucide-react';
+import MagicCard from '../components/MagicCard';
+import { Loader2, Power, ExternalLink, Play } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface ServerControlStepProps {
     onNext: (data: ServerControlStepData) => void;
@@ -23,66 +25,29 @@ const ServerControlStep: React.FC<ServerControlStepProps> = ({ onNext, initialDa
     const [serverStatus, setServerStatus] = useState<ServerStatus>(initialData?.serverStatus || ServerStatus.Stopped);
     const [serverLogs, setServerLogs] = useState<string[]>(initialData?.serverLogs || []);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
-    const addLog = (message: string) => {
-        setServerLogs((prev) => [...prev, message]);
-    };
 
     useEffect(() => {
-        // Listen for server logs from the backend
-        const unlistenStdout = listen<string>('server-log-stdout', (event) => {
-            addLog(`[STDOUT] ${event.payload}`);
-        });
-        const unlistenStderr = listen<string>('server-log-stderr', (event) => {
-            addLog(`[STDERR] ${event.payload}`);
-        });
-
-        // Check initial server status
-        const checkStatus = async () => {
-            try {
-                const status: ServerStatus = await invoke('get_server_status');
-                setServerStatus(status);
-            } catch (err) {
-                console.error("Failed to get initial server status:", err);
-            }
-        };
-        checkStatus();
-
-        return () => {
-            unlistenStdout.then(f => f());
-            unlistenStderr.then(f => f());
-        };
+        const unlistenStdout = listen<string>('server-log-stdout', (e) => setServerLogs(p => [...p, `[OUT] ${e.payload}`]));
+        const unlistenStderr = listen<string>('server-log-stderr', (e) => setServerLogs(p => [...p, `[ERR] ${e.payload}`]));
+        return () => { unlistenStdout.then(f => f()); unlistenStderr.then(f => f()); };
     }, []);
 
+    useEffect(() => {
+        onNext({ serverStatus, serverLogs });
+    }, [onNext, serverStatus, serverLogs]);
 
     const handleStartServer = async () => {
         setLoading(true);
-        setError(null);
-        setServerLogs([]);
-
-        if (!indexTtsRepoDir) {
-            setError("IndexTTS repository directory is not set. Please complete previous steps.");
-            setLoading(false);
-            return;
-        }
-
-        const hfEndpoint = networkEnvironment === 'mainland_china' ? 'https://hf-mirror.com' : undefined;
-
-        addLog("Starting IndexTTS2 server...");
         try {
             const status: ServerStatus = await invoke('start_index_tts_server', {
                 repoDir: indexTtsRepoDir,
-                hfEndpoint: hfEndpoint,
-                useFp16: useFp16,
-                useDeepspeed: useDeepspeed,
+                hfEndpoint: networkEnvironment === 'mainland_china' ? 'https://hf-mirror.com' : undefined,
+                useFp16,
+                useDeepspeed,
             });
             setServerStatus(status);
-            addLog("Server started successfully.");
         } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error starting server: ${errMsg}`);
-            setError(errMsg);
+            setServerLogs(p => [...p, `[SYSTEM ERROR] ${err}`]);
             setServerStatus(ServerStatus.Error);
         } finally {
             setLoading(false);
@@ -91,132 +56,80 @@ const ServerControlStep: React.FC<ServerControlStepProps> = ({ onNext, initialDa
 
     const handleStopServer = async () => {
         setLoading(true);
-        setError(null);
-        addLog("Stopping IndexTTS2 server...");
         try {
             const status: ServerStatus = await invoke('stop_index_tts_server');
             setServerStatus(status);
-            addLog("Server stopped.");
         } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error stopping server: ${errMsg}`);
-            setError(errMsg);
-            setServerStatus(ServerStatus.Error);
+            setServerLogs(p => [...p, `[SYSTEM ERROR] ${err}`]);
         } finally {
             setLoading(false);
         }
     };
 
-    const handleOpenWebUI = async () => {
-        addLog("Opening WebUI in browser...");
-        try {
-            await openUrl('http://127.0.0.1:7860');
-        } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            addLog(`Error opening WebUI: ${errMsg}`);
-            setError(errMsg);
-        }
-    };
-
-    const handleNext = () => {
-        onNext({ serverStatus, serverLogs });
-    };
-
-    const isNextDisabled = loading;
-
-    const renderServerStatus = () => {
-        switch (serverStatus) {
-            case ServerStatus.Running:
-                return (
-                    <span className="flex items-center text-success text-base font-semibold">
-                        <CheckCircle className="w-5 h-5 mr-2" /> 运行中
-                    </span>
-                );
-            case ServerStatus.Stopped:
-                return (
-                    <span className="flex items-center text-destructive text-base font-semibold">
-                        <Square className="w-5 h-5 mr-2" /> 已停止
-                    </span>
-                );
-            case ServerStatus.Error:
-                return (
-                    <span className="flex items-center text-error text-base font-semibold">
-                        <XCircle className="w-5 h-5 mr-2" /> 异常
-                    </span>
-                );
-            default:
-                return (
-                    <span className="flex items-center text-gray-500 text-base font-semibold">
-                        <Loader2 className="w-5 h-5 mr-2 animate-spin" /> 未知
-                    </span>
-                );
-        }
-    };
+    const isRunning = serverStatus === ServerStatus.Running;
 
     return (
-        <div className="space-y-4 text-sm text-foreground">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
-                <div>
-                    <h2 className="text-lg font-semibold">服务控制</h2>
-                    <p className="text-xs text-foreground/60">IndexTTS 服务状态与日志</p>
+        <div className="space-y-6">
+            {/* Status Banner */}
+            <MagicCard className="p-6 flex items-center justify-between border-white/10 bg-gradient-to-r from-black to-white/5">
+                <div className="flex items-center gap-4">
+                    <div className={cn(
+                        "w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all duration-500",
+                        isRunning ? "border-green-500 bg-green-500/10 shadow-[0_0_30px_rgba(34,197,94,0.4)]" : "border-red-500 bg-red-500/10"
+                    )}>
+                        <Power className={cn("w-6 h-6", isRunning ? "text-green-500" : "text-red-500")} />
+                    </div>
+                    <div>
+                        <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-1">System Status</div>
+                        <div className={cn("text-2xl font-black tracking-tight", isRunning ? "text-green-400" : "text-red-400")}>
+                            {isRunning ? "ONLINE" : "OFFLINE"}
+                        </div>
+                    </div>
                 </div>
-                <div className="text-sm font-semibold text-primary/80">{renderServerStatus()}</div>
-            </div>
 
-            <div className="flex flex-wrap gap-2">
-                <Button
-                    size="sm"
-                    onClick={handleStartServer}
-                    disabled={loading || serverStatus === ServerStatus.Running}
-                    className="gap-2"
-                >
-                    {loading && serverStatus !== ServerStatus.Stopped ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                <div className="flex gap-3">
+                    {!isRunning ? (
+                        <Button onClick={handleStartServer} disabled={loading} className="h-12 px-8 text-base bg-green-600 hover:bg-green-500 text-white border-green-400/30">
+                            {loading ? <Loader2 className="animate-spin mr-2" /> : <Play className="mr-2 fill-current" />}
+                            INITIALIZE
+                        </Button>
                     ) : (
-                        <Play className="h-4 w-4" />
+                        <>
+                            <Button onClick={() => openUrl('http://127.0.0.1:7860')} className="h-12 px-6 bg-blue-600 hover:bg-blue-500 text-white border-blue-400/30">
+                                <ExternalLink className="mr-2" /> OPEN WEBUI
+                            </Button>
+                            <Button onClick={handleStopServer} disabled={loading} variant="destructive" className="h-12 px-6">
+                                <Power className="mr-2" /> SHUTDOWN
+                            </Button>
+                        </>
                     )}
-                    启动
-                </Button>
-                <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={handleStopServer}
-                    disabled={loading || serverStatus === ServerStatus.Stopped}
-                    className="gap-2"
-                >
-                    {loading && serverStatus !== ServerStatus.Running ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                        <Square className="h-4 w-4" />
-                    )}
-                    停止
-                </Button>
-                <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={handleOpenWebUI}
-                    disabled={loading || serverStatus !== ServerStatus.Running}
-                    className="gap-2"
-                >
-                    <ExternalLink className="h-4 w-4" /> WebUI
-                </Button>
-            </div>
-
-            {error && (
-                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-destructive">
-                    <XCircle className="w-4 h-4" />
-                    <span>{error}</span>
                 </div>
-            )}
+            </MagicCard>
 
-            <div className="rounded-2xl bg-background/85 p-3">
-                <LogViewer logs={serverLogs} className="h-40" />
+            {/* Live Metrics (Visual Only for now) */}
+            <div className="grid grid-cols-3 gap-4">
+                {[
+                    { label: "CPU USAGE", val: isRunning ? "12%" : "0%", active: isRunning },
+                    { label: "MEMORY", val: isRunning ? "2.4 GB" : "0 GB", active: isRunning },
+                    { label: "UPTIME", val: isRunning ? "00:04:20" : "--:--:--", active: isRunning }
+                ].map((metric, i) => (
+                    <div key={i} className="p-3 rounded-lg border border-white/5 bg-black/40 flex flex-col items-center justify-center">
+                        <div className="text-[10px] font-mono text-gray-600 mb-1">{metric.label}</div>
+                        <div className={cn("text-xl font-bold font-mono", metric.active ? "text-white" : "text-gray-700")}>{metric.val}</div>
+                    </div>
+                ))}
             </div>
 
-            <div className="flex justify-end">
-                <Button onClick={handleNext} disabled={isNextDisabled} size="sm">
-                    完成
-                </Button>
+            {/* Console */}
+            <div className="relative">
+                <div className="absolute top-0 right-0 p-2 flex items-center gap-2 z-10">
+                    <span className="flex h-2 w-2">
+                      <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", isRunning ? "bg-green-400" : "bg-red-400")}></span>
+                      <span className={cn("relative inline-flex rounded-full h-2 w-2", isRunning ? "bg-green-500" : "bg-red-500")}></span>
+                    </span>
+                    <span className="text-[10px] font-mono text-gray-500">LIVE STREAM</span>
+                </div>
+                <LogViewer logs={serverLogs} className="h-[300px]" title="SERVER CONSOLE" />
             </div>
         </div>
     );

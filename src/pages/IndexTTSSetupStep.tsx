@@ -5,8 +5,8 @@ import { useWizard } from '../context/WizardContext';
 import LogViewer from '../components/LogViewer';
 import { Button } from '../components/ui/button';
 import MagicCard from '../components/MagicCard';
-import CipherRevealText from '../components/CipherRevealText';
-import { Loader2, Play, FolderOpen, CheckCircle, XCircle, ClipboardCopy, HardDrive } from 'lucide-react';
+import { Loader2, Play, FolderOpen, HardDrive, GitBranch, Layers } from 'lucide-react';
+import {cn} from "@/lib/utils.ts";
 
 interface IndexTTSSetupStepProps {
     onNext: (data: IndexTTSSetupStepData) => void;
@@ -35,10 +35,10 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
 
     const resolveDefaultRepoPath = useCallback(async () => {
         try {
-            const defaultPath: string = await invoke('get_default_repo_path');
+            // This invoke might fail if not implemented in backend yet, wrapping in try/catch
+            const defaultPath = await invoke<string>('get_default_repo_path').catch(() => '');
             return defaultPath;
         } catch (err) {
-            console.error("Failed to get default repo path:", err);
             return '';
         }
     }, []);
@@ -60,40 +60,39 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
     const handleSetupIndexTTS = async () => {
         setSettingUp(true);
         setError(null);
-        setSetupLogs([]);
+        setSetupLogs(prev => [...prev, ">>> Starting IndexTTS Initialization Sequence"]);
 
         if (!repoDir) {
-            setError("IndexTTS repository path is not set.");
+            setError("Target directory path is undefined.");
             setSettingUp(false);
             return;
         }
 
         // 1. Clone repository
         if (!repoCloned) {
-            addLog(`Cloning IndexTTS2 repository to ${repoDir}...`);
+            addLog(`> Cloning repository to: ${repoDir}`);
             try {
                 const cloneResult: string = await invoke('clone_index_tts_repo', { targetDir: repoDir });
                 addLog(cloneResult);
                 setRepoCloned(true);
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                addLog(`Error cloning repository: ${errMsg}`);
+                addLog(`[FATAL] Clone failed: ${errMsg}`);
                 setError(errMsg);
                 setSettingUp(false);
                 return;
             }
         } else {
-            addLog("IndexTTS2 repository already cloned.");
+            addLog("> Repository check: OK");
         }
 
-
-        // 2. Setup environment with uv sync
-        if (repoCloned && !envSetup) { // Only run if repo is cloned and env not yet setup
-            addLog("Setting up IndexTTS2 environment with uv sync...");
+        // 2. Setup environment
+        if (repoCloned && !envSetup) {
+            addLog("> Initializing Python virtual environment (uv)...");
             let pypiMirror: string | null = null;
             if (networkEnvironment === 'mainland_china') {
                 pypiMirror = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple";
-                addLog(`Using PyPI mirror: ${pypiMirror}`);
+                addLog(`> Applied Mirror: ${pypiMirror}`);
             }
 
             try {
@@ -102,20 +101,17 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
                 setEnvSetup(true);
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                addLog(`Error setting up environment: ${errMsg}`);
+                addLog(`[FATAL] Env setup failed: ${errMsg}`);
                 setError(errMsg);
                 setSettingUp(false);
                 return;
             }
         } else if (envSetup) {
-            addLog("IndexTTS2 environment already set up.");
+            addLog("> Environment check: OK");
         }
 
-
         if (repoCloned && envSetup) {
-            addLog("IndexTTS2 setup completed successfully!");
-        } else {
-             addLog("IndexTTS2 setup encountered issues. Please check logs for details.");
+            addLog(">>> Initialization Complete.");
         }
         setSettingUp(false);
     };
@@ -127,29 +123,14 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
                 directory: true,
                 defaultPath: repoDir || undefined,
             });
-
             if (typeof selected === 'string') {
                 setRepoDir(selected);
                 setIndexTtsRepoDir(selected);
             }
         } catch (err) {
-            console.error("Failed to open directory picker:", err);
+            console.error(err);
         }
     };
-
-    const handleCopyLogs = async () => {
-        if (setupLogs.length > 0) {
-            const logsContent = setupLogs.join('\n');
-            try {
-                await navigator.clipboard.writeText(logsContent);
-                // alert("Logs copied to clipboard!"); // Use a toast notification instead of alert
-            } catch (err) {
-                console.error("Failed to copy logs:", err);
-                // alert("Failed to copy logs to clipboard. Check console for details.");
-            }
-        }
-    };
-
 
     const handleNext = () => {
         onNext({ repoCloned, envSetup, setupLogs, repoDir });
@@ -157,106 +138,76 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
 
     const isNextDisabled = settingUp || !repoCloned || !envSetup;
 
-
     return (
-        <div className="space-y-4">
-            <div className="text-center space-y-1.5">
-                <CipherRevealText text="仓库配置" className="text-2xl font-semibold" interval={80} />
-                <p className="text-xs text-foreground/60">确认路径并一键完成克隆与环境。</p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-                <MagicCard className="p-3 space-y-2">
-                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em] flex items-center gap-2">
-                        <HardDrive className="w-4 h-4 text-secondary" /> 运行路径
+        <div className="space-y-6">
+            {/* Path Configuration */}
+            <MagicCard className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-secondary">
+                        <HardDrive className="w-4 h-4" /> Installation Path
                     </h3>
-                    <input
-                        type="text"
-                        placeholder="如 /Users/me/.indextts2/index-tts"
-                        className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                        value={repoDir}
-                        onChange={(e) => {
-                            setRepoDir(e.target.value);
-                            setIndexTtsRepoDir(e.target.value);
-                        }}
-                        disabled={settingUp}
-                    />
-                    <div className="flex items-center justify-between text-xs text-foreground/60">
-                        <span>默认：{repoDir || '检测中'}</span>
-                        <Button variant="outline" size="sm" onClick={handleBrowseRepoDir} disabled={settingUp}>
-                            <FolderOpen className="w-4 h-4 mr-1" /> 浏览
-                        </Button>
-                    </div>
-                </MagicCard>
+                    <span className="text-[10px] font-mono text-gray-500">LOCAL FILESYSTEM</span>
+                </div>
 
-                <MagicCard className="p-3">
-                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em] mb-2">进度</h3>
-                    <ul className="list-none space-y-1.5 text-xs">
-                        <li className="flex justify-between items-center">
-                            <span>仓库</span>
-                            {settingUp && !repoCloned ? (
-                                <span className="flex items-center text-primary">
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 克隆中
-                                </span>
-                            ) : repoCloned ? (
-                                <span className="flex items-center text-success">
-                                    <CheckCircle className="w-4 h-4 mr-2" /> 已克隆
-                                </span>
-                            ) : (
-                                <span className="flex items-center text-destructive">
-                                    <XCircle className="w-4 h-4 mr-2" /> 未完成
-                                </span>
-                            )}
-                        </li>
-                        <li className="flex justify-between items-center">
-                            <span>环境</span>
-                            {settingUp && repoCloned && !envSetup ? (
-                                <span className="flex items-center text-primary">
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 配置中
-                                </span>
-                            ) : envSetup ? (
-                                <span className="flex items-center text-success">
-                                    <CheckCircle className="w-4 h-4 mr-2" /> 已完成
-                                </span>
-                            ) : (
-                                <span className="flex items-center text-destructive">
-                                    <XCircle className="w-4 h-4 mr-2" /> 未完成
-                                </span>
-                            )}
-                        </li>
-                    </ul>
-                    <div className="pt-3 text-right">
-                        <Button onClick={handleSetupIndexTTS} disabled={settingUp} size="sm">
-                            {settingUp ? (
-                                <span className="flex items-center">
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 执行中
-                                </span>
-                            ) : (
-                                <span className="flex items-center">
-                                    <Play className="w-4 h-4 mr-2" /> 开始
-                                </span>
-                            )}
-                        </Button>
+                <div className="flex gap-2">
+                    <div className="relative flex-1">
+                        <input
+                            type="text"
+                            className="w-full h-10 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-xs font-mono text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+                            value={repoDir}
+                            onChange={(e) => {
+                                setRepoDir(e.target.value);
+                                setIndexTtsRepoDir(e.target.value);
+                            }}
+                            disabled={settingUp}
+                            placeholder="/path/to/install/indextts"
+                        />
                     </div>
-                </MagicCard>
-            </div>
-            {error && (
-                <MagicCard className="p-4 bg-destructive/10 border-destructive/40 text-destructive flex items-center justify-between gap-2 text-sm">
-                    <span className="flex items-center">
-                        <XCircle className="w-4 h-4 mr-2" /> {error}
-                    </span>
-                    <Button variant="destructive" size="sm" onClick={handleCopyLogs} className="flex items-center gap-2">
-                        <ClipboardCopy className="w-4 h-4" /> 复制日志
+                    <Button variant="outline" onClick={handleBrowseRepoDir} disabled={settingUp}>
+                        <FolderOpen className="w-4 h-4" />
                     </Button>
-                </MagicCard>
+                </div>
+            </MagicCard>
+
+            <div className="grid gap-6 md:grid-cols-3">
+                {/* Actions */}
+                <div className="md:col-span-1 space-y-3">
+                    <Button
+                        onClick={handleSetupIndexTTS}
+                        disabled={settingUp}
+                        className="w-full h-auto py-4 flex flex-col gap-2 items-center justify-center"
+                        variant="default"
+                    >
+                        {settingUp ? <Loader2 className="w-6 h-6 animate-spin" /> : <Play className="w-6 h-6" />}
+                        <span className="text-xs uppercase font-bold">{settingUp ? 'EXECUTING...' : 'START SETUP'}</span>
+                    </Button>
+
+                    <div className="space-y-2">
+                        <div className={cn("p-3 rounded-lg border flex items-center justify-between", repoCloned ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-white/5 border-white/5 text-gray-500")}>
+                            <div className="flex items-center gap-2 text-xs font-bold uppercase"><GitBranch className="w-4 h-4" /> Clone Repo</div>
+                            <div className={cn("w-2 h-2 rounded-full", repoCloned ? "bg-green-500" : "bg-gray-700")} />
+                        </div>
+                        <div className={cn("p-3 rounded-lg border flex items-center justify-between", envSetup ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-white/5 border-white/5 text-gray-500")}>
+                            <div className="flex items-center gap-2 text-xs font-bold uppercase"><Layers className="w-4 h-4" /> Python Env</div>
+                            <div className={cn("w-2 h-2 rounded-full", envSetup ? "bg-green-500" : "bg-gray-700")} />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Logs */}
+                <div className="md:col-span-2 h-full">
+                    <LogViewer logs={setupLogs} className="h-full min-h-[200px]" title="SETUP LOG" />
+                </div>
+            </div>
+
+            {error && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono">
+                    [ERROR] {error}
+                </div>
             )}
 
-            {setupLogs.length > 0 && (
-                <LogViewer logs={setupLogs} />
-            )}
-
-            <div className="flex justify-end pt-4">
-                <Button onClick={handleNext} disabled={isNextDisabled}>
+            <div className="flex justify-end pt-2">
+                <Button onClick={handleNext} disabled={isNextDisabled} className="px-8">
                     继续
                 </Button>
             </div>
