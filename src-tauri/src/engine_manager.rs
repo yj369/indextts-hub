@@ -34,6 +34,7 @@ pub struct EngineManager {
     config: EngineConfig,
     status: EngineStatus,
     // 存储 IndexTTS2 子进程的句柄，用于启动/停止控制 (FR-ENG-02, FR-ENG-03)
+    #[allow(dead_code)]
     process_handle: Option<tokio::process::Child>,
 }
 

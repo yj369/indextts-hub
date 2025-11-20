@@ -3,8 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from '../context/WizardContext';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen } from '@tauri-apps/api/event';
-import LogViewer from '../components/LogViewer'; // Import LogViewer
+import LogViewer from '../components/LogViewer';
+import { Button } from '../components/ui/button';
 import { ServerStatus } from '../types/tauri';
+import { Loader2, Play, Square, CheckCircle, XCircle, ExternalLink } from 'lucide-react';
 
 interface ServerControlStepProps {
     onNext: (data: ServerControlStepData) => void;
@@ -122,54 +124,99 @@ const ServerControlStep: React.FC<ServerControlStepProps> = ({ onNext, initialDa
 
     const isNextDisabled = loading;
 
-    return (
-        <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Start/Stop IndexTTS2 Server</h2>
-            <p>Control the IndexTTS2 WebUI server and view its logs.</p>
+    const renderServerStatus = () => {
+        switch (serverStatus) {
+            case ServerStatus.Running:
+                return (
+                    <span className="flex items-center text-success text-base font-semibold">
+                        <CheckCircle className="w-5 h-5 mr-2" /> 运行中
+                    </span>
+                );
+            case ServerStatus.Stopped:
+                return (
+                    <span className="flex items-center text-destructive text-base font-semibold">
+                        <Square className="w-5 h-5 mr-2" /> 已停止
+                    </span>
+                );
+            case ServerStatus.Error:
+                return (
+                    <span className="flex items-center text-error text-base font-semibold">
+                        <XCircle className="w-5 h-5 mr-2" /> 异常
+                    </span>
+                );
+            default:
+                return (
+                    <span className="flex items-center text-gray-500 text-base font-semibold">
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" /> 未知
+                    </span>
+                );
+        }
+    };
 
-            <div className="card bg-base-200 shadow-md p-4">
-                <h3 className="card-title">Server Status:</h3>
-                <p>
-                    {serverStatus === ServerStatus.Running && <span className="text-success">✅ Running</span>}
-                    {serverStatus === ServerStatus.Stopped && <span className="text-error">🔴 Stopped</span>}
-                    {serverStatus === ServerStatus.Error && <span className="text-error">❌ Error</span>}
-                    {loading && <span className="ml-2 loading loading-spinner loading-sm"></span>}
-                </p>
-                <div className="flex gap-4 mt-4">
-                    <button
-                        className="btn btn-primary"
-                        onClick={handleStartServer}
-                        disabled={loading || serverStatus === ServerStatus.Running}
-                    >
-                        Start Server
-                    </button>
-                    <button
-                        className="btn btn-warning"
-                        onClick={handleStopServer}
-                        disabled={loading || serverStatus === ServerStatus.Stopped}
-                    >
-                        Stop Server
-                    </button>
-                    <button
-                        className="btn btn-info"
-                        onClick={handleOpenWebUI}
-                        disabled={loading || serverStatus !== ServerStatus.Running}
-                    >
-                        Open WebUI
-                    </button>
+    return (
+        <div className="space-y-4 text-sm text-foreground">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+                <div>
+                    <h2 className="text-lg font-semibold">服务控制</h2>
+                    <p className="text-xs text-foreground/60">IndexTTS 服务状态与日志</p>
                 </div>
+                <div className="text-sm font-semibold text-primary/80">{renderServerStatus()}</div>
             </div>
 
-            {error && <div className="text-error-content bg-error p-2 rounded">{error}</div>}
+            <div className="flex flex-wrap gap-2">
+                <Button
+                    size="sm"
+                    onClick={handleStartServer}
+                    disabled={loading || serverStatus === ServerStatus.Running}
+                    className="gap-2"
+                >
+                    {loading && serverStatus !== ServerStatus.Stopped ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Play className="h-4 w-4" />
+                    )}
+                    启动
+                </Button>
+                <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={handleStopServer}
+                    disabled={loading || serverStatus === ServerStatus.Stopped}
+                    className="gap-2"
+                >
+                    {loading && serverStatus !== ServerStatus.Running ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Square className="h-4 w-4" />
+                    )}
+                    停止
+                </Button>
+                <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleOpenWebUI}
+                    disabled={loading || serverStatus !== ServerStatus.Running}
+                    className="gap-2"
+                >
+                    <ExternalLink className="h-4 w-4" /> WebUI
+                </Button>
+            </div>
 
-            {serverLogs.length > 0 && (
-                <LogViewer logs={serverLogs} />
+            {error && (
+                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-destructive">
+                    <XCircle className="w-4 h-4" />
+                    <span>{error}</span>
+                </div>
             )}
 
-            <div className="mt-6">
-                <button className="btn btn-primary" onClick={handleNext} disabled={isNextDisabled}>
-                    Finish
-                </button>
+            <div className="rounded-2xl bg-background/85 p-3">
+                <LogViewer logs={serverLogs} className="h-40" />
+            </div>
+
+            <div className="flex justify-end">
+                <Button onClick={handleNext} disabled={isNextDisabled} size="sm">
+                    完成
+                </Button>
             </div>
         </div>
     );

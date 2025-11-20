@@ -3,6 +3,7 @@
 use serde::{Serialize, Deserialize};
 use tokio::process::Command;
 use std::path::Path;
+use std::path::PathBuf;
 
 #[tauri::command]
 pub async fn clone_index_tts_repo(target_dir: String) -> Result<String, String> {
@@ -42,6 +43,30 @@ pub async fn clone_index_tts_repo(target_dir: String) -> Result<String, String> 
     }
 
     install_lfs_and_pull(&target_dir).await
+}
+
+#[tauri::command]
+pub fn check_index_tts_repo(repo_dir: Option<String>) -> Result<bool, String> {
+    let normalized = match repo_dir {
+        Some(path) => path.trim().to_string(),
+        None => return Ok(false),
+    };
+
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+
+    let repo_path = PathBuf::from(&normalized);
+    if !repo_path.exists() || !repo_path.is_dir() {
+        return Ok(false);
+    }
+
+    let git_dir = repo_path.join(".git");
+    if !git_dir.exists() || !git_dir.is_dir() {
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 async fn install_lfs_and_pull(repo_dir: &str) -> Result<String, String> {

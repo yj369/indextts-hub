@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from '../context/WizardContext';
-import LogViewer from '../components/LogViewer'; // Import LogViewer
+import { Button } from '../components/ui/button';
+import LogViewer from '../components/LogViewer';
 import { ModelSource } from '../types/tauri';
+import MagicCard from '../components/MagicCard';
+import CipherRevealText from '../components/CipherRevealText';
+import { Loader2, Play, Download as DownloadIcon, CheckCircle, XCircle, CloudDownload, AlertCircle } from 'lucide-react';
 
 interface ModelDownloadStepProps {
     onNext: (data: ModelDownloadStepData) => void;
@@ -89,9 +93,11 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
         setDownloadLogs([]);
 
         if (!hfToolInstalled || !msToolInstalled) {
+            // Attempt to install if not already
             await handleInstallTools();
+            // Re-check after attempt
             if (!hfToolInstalled || !msToolInstalled) {
-                setError("Failed to install model download tools. Cannot proceed.");
+                setError("Failed to install model download tools. Cannot proceed with download.");
                 setDownloading(false);
                 return;
             }
@@ -126,69 +132,145 @@ const ModelDownloadStep: React.FC<ModelDownloadStepProps> = ({ onNext, initialDa
     };
 
     const repoReady = Boolean(indexTtsRepoDir);
-    const installDisabled = downloading || !repoReady || (hfToolInstalled && msToolInstalled);
-    const downloadDisabled = downloading || !repoReady || !hfToolInstalled || !msToolInstalled;
+    const installToolsButtonDisabled = downloading || !repoReady || (hfToolInstalled && msToolInstalled);
+    const downloadModelButtonDisabled = downloading || !repoReady || !hfToolInstalled || !msToolInstalled;
     const isNextDisabled = downloading || !modelDownloaded;
 
 
     return (
-        <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Download Model & Mirror Settings</h2>
-            <p>Choose your preferred model source and download the IndexTTS2 model.</p>
+        <div className="space-y-6">
+            <div className="text-center space-y-2">
+                <CipherRevealText text="下载模型" className="text-2xl font-semibold" interval={80} />
+                <p className="text-sm text-foreground/60">选择来源并保存到仓库。</p>
+            </div>
 
             {!repoReady && (
-                <div className="alert alert-warning">
-                    请先完成 “IndexTTS Setup” 步骤并设置仓库路径，才能下载模型。
-                </div>
+                <MagicCard className="p-4 text-warning border-warning bg-warning/10 flex items-center gap-2 text-sm">
+                    <AlertCircle className="w-4 h-4" />
+                    <span>先完成仓库配置再继续。</span>
+                </MagicCard>
             )}
 
-            <button className="btn btn-primary" onClick={handleInstallTools} disabled={installDisabled}>
-                {downloading ? 'Installing Tools...' : 'Install Model Download Tools'}
-            </button>
+            <MagicCard className="p-4 space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                    <h3 className="font-semibold text-foreground/80 uppercase tracking-wide">下载工具</h3>
+                    <Button onClick={handleInstallTools} disabled={installToolsButtonDisabled} className="px-4" size="sm">
+                        {downloading && installToolsButtonDisabled ? (
+                            <span className="flex items-center">
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 安装中
+                            </span>
+                        ) : (
+                            <span className="flex items-center">
+                                <Play className="w-4 h-4 mr-2" /> 安装工具
+                            </span>
+                        )}
+                    </Button>
+                </div>
+                <ul className="list-none space-y-2 text-sm">
+                    <li className="flex justify-between items-center">
+                        <span>HuggingFace</span>
+                        {hfToolInstalled ? (
+                            <span className="flex items-center text-success">
+                                <CheckCircle className="w-4 h-4 mr-2" /> 已安装
+                            </span>
+                        ) : (
+                            <span className="flex items-center text-destructive">
+                                <XCircle className="w-4 h-4 mr-2" /> 未安装
+                            </span>
+                        )}
+                    </li>
+                    <li className="flex justify-between items-center">
+                        <span>ModelScope</span>
+                        {msToolInstalled ? (
+                            <span className="flex items-center text-success">
+                                <CheckCircle className="w-4 h-4 mr-2" /> 已安装
+                            </span>
+                        ) : (
+                            <span className="flex items-center text-destructive">
+                                <XCircle className="w-4 h-4 mr-2" /> 未安装
+                            </span>
+                        )}
+                    </li>
+                </ul>
+            </MagicCard>
 
-            <div className="form-control">
-                <label className="label">
-                    <span className="label-text">Model Source:</span>
-                </label>
-                <select
-                    className="select select-bordered w-full max-w-xs"
-                    value={selectedModelSource}
-                    onChange={(e) => setSelectedModelSource(e.target.value as ModelSource)}
-                    disabled={downloading}
-                >
-                    <option value={ModelSource.HuggingFace}>HuggingFace (Recommended for Overseas)</option>
-                    <option value={ModelSource.ModelScope}>ModelScope.cn (Recommended for Mainland China)</option>
-                </select>
+            <MagicCard className="p-4 space-y-4">
+                <h3 className="text-sm font-semibold text-foreground/80 uppercase tracking-wide flex items-center gap-2">
+                    <CloudDownload className="w-4 h-4 text-secondary" /> 来源与路径
+                </h3>
+                <div className="space-y-4 text-sm">
+                    <div>
+                        <label htmlFor="model-source" className="block text-foreground/80 mb-1">
+                            来源
+                        </label>
+                        <select
+                            id="model-source"
+                            className="w-full rounded-md border border-border bg-input px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                            value={selectedModelSource}
+                            onChange={(e) => setSelectedModelSource(e.target.value as ModelSource)}
+                            disabled={downloading}
+                        >
+                            <option value={ModelSource.HuggingFace}>HuggingFace（海外）</option>
+                            <option value={ModelSource.ModelScope}>ModelScope（国内）</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="model-save-path" className="block text-foreground/80 mb-1">
+                            保存目录（相对仓库）
+                        </label>
+                        <input
+                            id="model-save-path"
+                            type="text"
+                            placeholder="如 checkpoints"
+                            className="w-full rounded-md border border-border bg-input px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                            value={modelSavePath}
+                            onChange={(e) => setModelSavePath(e.target.value)}
+                            disabled={downloading}
+                        />
+                         <p className="text-xs text-foreground/60 mt-1">
+                            {indexTtsRepoDir}/{modelSavePath}
+                        </p>
+                    </div>
+                </div>
+            </MagicCard>
+
+            <div className="flex justify-center">
+                <Button onClick={handleDownloadModel} disabled={downloadModelButtonDisabled} className="px-6">
+                    {downloading && downloadModelButtonDisabled ? (
+                        <span className="flex items-center">
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 下载中
+                        </span>
+                    ) : (
+                        <span className="flex items-center">
+                            <DownloadIcon className="w-4 h-4 mr-2" /> 下载
+                        </span>
+                    )}
+                </Button>
             </div>
 
-            <div className="form-control">
-                <label className="label">
-                    <span className="label-text">Model Save Location (relative to repo dir):</span>
-                </label>
-                <input
-                    type="text"
-                    placeholder="e.g., checkpoints"
-                    className="input input-bordered w-full"
-                    value={modelSavePath}
-                    onChange={(e) => setModelSavePath(e.target.value)}
-                    disabled={downloading}
-                />
-            </div>
+            {modelDownloaded && (
+                <MagicCard className="p-4 bg-success/10 border-success/60 text-success flex items-center gap-2 text-sm">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>模型就绪</span>
+                </MagicCard>
+            )}
 
-            <button className="btn btn-primary" onClick={handleDownloadModel} disabled={downloadDisabled}>
-                {downloading ? 'Downloading...' : 'Download Model'}
-            </button>
-
-            {error && <div className="text-error-content bg-error p-2 rounded">{error}</div>}
+            {error && (
+                <MagicCard className="p-4 bg-destructive/10 border-destructive/50 text-destructive flex items-center gap-2 text-sm">
+                    <XCircle className="w-4 h-4" />
+                    <span>{error}</span>
+                </MagicCard>
+            )}
 
             {downloadLogs.length > 0 && (
                 <LogViewer logs={downloadLogs} />
             )}
 
-            <div className="mt-6">
-                <button className="btn btn-primary" onClick={handleNext} disabled={isNextDisabled}>
-                    Continue
-                </button>
+            <div className="flex justify-end pt-4">
+                <Button onClick={handleNext} disabled={isNextDisabled}>
+                    继续
+                </Button>
             </div>
         </div>
     );
