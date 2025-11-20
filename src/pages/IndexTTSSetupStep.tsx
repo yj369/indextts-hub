@@ -1,7 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useWizard } from '../context/WizardContext';
-import LogViewer from '../components/LogViewer'; // Import LogViewer
+import LogViewer from '../components/LogViewer';
+import { Button } from '../components/ui/button';
+import MagicCard from '../components/MagicCard';
+import CipherRevealText from '../components/CipherRevealText';
+import { Loader2, Play, FolderOpen, CheckCircle, XCircle, ClipboardCopy, HardDrive } from 'lucide-react';
 
 interface IndexTTSSetupStepProps {
     onNext: (data: IndexTTSSetupStepData) => void;
@@ -20,7 +25,7 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
     const [repoCloned, setRepoCloned] = useState(initialData?.repoCloned || false);
     const [envSetup, setEnvSetup] = useState(initialData?.envSetup || false);
     const [setupLogs, setSetupLogs] = useState<string[]>(initialData?.setupLogs || []);
-    const [repoDir, setRepoDir] = useState(initialData?.repoDir || ''); // Default or user-selected path
+    const [repoDir, setRepoDir] = useState(initialData?.repoDir || '');
     const [settingUp, setSettingUp] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -28,24 +33,28 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
         setSetupLogs((prev) => [...prev, message]);
     };
 
-    const defaultRepoPath = async () => {
-        // This should eventually come from a Tauri command that returns
-        // a user-friendly default path (e.g., ~/.indextts2/index-tts)
-        // For now, a placeholder
-        // TODO: Replace with actual path resolution from backend
-        return '/Users/yuxuan/Desktop/indextts-hub/indextts-repo'; // Placeholder, adjust as needed
-    };
+    const resolveDefaultRepoPath = useCallback(async () => {
+        try {
+            const defaultPath: string = await invoke('get_default_repo_path');
+            return defaultPath;
+        } catch (err) {
+            console.error("Failed to get default repo path:", err);
+            return '';
+        }
+    }, []);
 
     useEffect(() => {
-        async function setDefaultPath() {
-            const path = await defaultRepoPath();
-            setRepoDir(path);
-            setIndexTtsRepoDir(path); // Update global context
+        async function setDefaultPathIfNotSet() {
+            if (!initialData?.repoDir) {
+                const path = await resolveDefaultRepoPath();
+                if (path) {
+                    setRepoDir(path);
+                    setIndexTtsRepoDir(path);
+                }
+            }
         }
-        if (!initialData?.repoDir) {
-            setDefaultPath();
-        }
-    }, [initialData?.repoDir, setIndexTtsRepoDir]);
+        setDefaultPathIfNotSet();
+    }, [initialData?.repoDir, setIndexTtsRepoDir, resolveDefaultRepoPath]);
 
 
     const handleSetupIndexTTS = async () => {
@@ -79,7 +88,7 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
 
 
         // 2. Setup environment with uv sync
-        if (!envSetup) {
+        if (repoCloned && !envSetup) { // Only run if repo is cloned and env not yet setup
             addLog("Setting up IndexTTS2 environment with uv sync...");
             let pypiMirror: string | null = null;
             if (networkEnvironment === 'mainland_china') {
@@ -98,13 +107,34 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
                 setSettingUp(false);
                 return;
             }
-        } else {
+        } else if (envSetup) {
             addLog("IndexTTS2 environment already set up.");
         }
 
 
-        addLog("IndexTTS2 setup completed successfully!");
+        if (repoCloned && envSetup) {
+            addLog("IndexTTS2 setup completed successfully!");
+        } else {
+             addLog("IndexTTS2 setup encountered issues. Please check logs for details.");
+        }
         setSettingUp(false);
+    };
+
+    const handleBrowseRepoDir = async () => {
+        try {
+            const selected = await open({
+                multiple: false,
+                directory: true,
+                defaultPath: repoDir || undefined,
+            });
+
+            if (typeof selected === 'string') {
+                setRepoDir(selected);
+                setIndexTtsRepoDir(selected);
+            }
+        } catch (err) {
+            console.error("Failed to open directory picker:", err);
+        }
     };
 
     const handleCopyLogs = async () => {
@@ -112,10 +142,10 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
             const logsContent = setupLogs.join('\n');
             try {
                 await navigator.clipboard.writeText(logsContent);
-                alert("Logs copied to clipboard!");
+                // alert("Logs copied to clipboard!"); // Use a toast notification instead of alert
             } catch (err) {
                 console.error("Failed to copy logs:", err);
-                alert("Failed to copy logs to clipboard. Check console for details.");
+                // alert("Failed to copy logs to clipboard. Check console for details.");
             }
         }
     };
@@ -130,48 +160,105 @@ const IndexTTSSetupStep: React.FC<IndexTTSSetupStepProps> = ({ onNext, initialDa
 
     return (
         <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Install IndexTTS2 & Dependencies</h2>
-            <p>This step will clone the IndexTTS2 repository and set up its Python environment.</p>
-
-            <div className="form-control">
-                <label className="label">
-                    <span className="label-text">IndexTTS2 Repository Path:</span>
-                </label>
-                <input
-                    type="text"
-                    placeholder="e.g., C:\Users\YourUser\.indextts2\index-tts"
-                    className="input input-bordered w-full"
-                    value={repoDir}
-                    onChange={(e) => {
-                        setRepoDir(e.target.value);
-                        setIndexTtsRepoDir(e.target.value); // Update global context
-                    }}
-                    disabled={settingUp}
-                />
-                 <span className="label-text-alt mt-1">
-                    Default: {repoDir || 'Resolving default path...'}
-                </span>
+            <div className="text-center space-y-1.5">
+                <CipherRevealText text="仓库配置" className="text-2xl font-semibold" interval={80} />
+                <p className="text-xs text-foreground/60">确认路径并一键完成克隆与环境。</p>
             </div>
 
-            <button className="btn btn-primary" onClick={handleSetupIndexTTS} disabled={settingUp}>
-                {settingUp ? 'Setting up...' : 'Start IndexTTS2 Setup'}
-            </button>
+            <div className="grid gap-3 sm:grid-cols-2">
+                <MagicCard className="p-3 space-y-2">
+                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em] flex items-center gap-2">
+                        <HardDrive className="w-4 h-4 text-secondary" /> 运行路径
+                    </h3>
+                    <input
+                        type="text"
+                        placeholder="如 /Users/me/.indextts2/index-tts"
+                        className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                        value={repoDir}
+                        onChange={(e) => {
+                            setRepoDir(e.target.value);
+                            setIndexTtsRepoDir(e.target.value);
+                        }}
+                        disabled={settingUp}
+                    />
+                    <div className="flex items-center justify-between text-xs text-foreground/60">
+                        <span>默认：{repoDir || '检测中'}</span>
+                        <Button variant="outline" size="sm" onClick={handleBrowseRepoDir} disabled={settingUp}>
+                            <FolderOpen className="w-4 h-4 mr-1" /> 浏览
+                        </Button>
+                    </div>
+                </MagicCard>
 
+                <MagicCard className="p-3">
+                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em] mb-2">进度</h3>
+                    <ul className="list-none space-y-1.5 text-xs">
+                        <li className="flex justify-between items-center">
+                            <span>仓库</span>
+                            {settingUp && !repoCloned ? (
+                                <span className="flex items-center text-primary">
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 克隆中
+                                </span>
+                            ) : repoCloned ? (
+                                <span className="flex items-center text-success">
+                                    <CheckCircle className="w-4 h-4 mr-2" /> 已克隆
+                                </span>
+                            ) : (
+                                <span className="flex items-center text-destructive">
+                                    <XCircle className="w-4 h-4 mr-2" /> 未完成
+                                </span>
+                            )}
+                        </li>
+                        <li className="flex justify-between items-center">
+                            <span>环境</span>
+                            {settingUp && repoCloned && !envSetup ? (
+                                <span className="flex items-center text-primary">
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 配置中
+                                </span>
+                            ) : envSetup ? (
+                                <span className="flex items-center text-success">
+                                    <CheckCircle className="w-4 h-4 mr-2" /> 已完成
+                                </span>
+                            ) : (
+                                <span className="flex items-center text-destructive">
+                                    <XCircle className="w-4 h-4 mr-2" /> 未完成
+                                </span>
+                            )}
+                        </li>
+                    </ul>
+                    <div className="pt-3 text-right">
+                        <Button onClick={handleSetupIndexTTS} disabled={settingUp} size="sm">
+                            {settingUp ? (
+                                <span className="flex items-center">
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 执行中
+                                </span>
+                            ) : (
+                                <span className="flex items-center">
+                                    <Play className="w-4 h-4 mr-2" /> 开始
+                                </span>
+                            )}
+                        </Button>
+                    </div>
+                </MagicCard>
+            </div>
             {error && (
-                <div className="text-error-content bg-error p-2 rounded flex justify-between items-center">
-                    <span>{error}</span>
-                    <button className="btn btn-sm btn-error" onClick={handleCopyLogs}>Copy Logs</button>
-                </div>
+                <MagicCard className="p-4 bg-destructive/10 border-destructive/40 text-destructive flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center">
+                        <XCircle className="w-4 h-4 mr-2" /> {error}
+                    </span>
+                    <Button variant="destructive" size="sm" onClick={handleCopyLogs} className="flex items-center gap-2">
+                        <ClipboardCopy className="w-4 h-4" /> 复制日志
+                    </Button>
+                </MagicCard>
             )}
 
             {setupLogs.length > 0 && (
                 <LogViewer logs={setupLogs} />
             )}
 
-            <div className="mt-6">
-                <button className="btn btn-primary" onClick={handleNext} disabled={isNextDisabled}>
-                    Continue
-                </button>
+            <div className="flex justify-end pt-4">
+                <Button onClick={handleNext} disabled={isNextDisabled}>
+                    继续
+                </Button>
             </div>
         </div>
     );

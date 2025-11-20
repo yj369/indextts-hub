@@ -26,7 +26,6 @@ impl ServerChildProcess {
 pub enum ServerStatus {
     Running,
     Stopped,
-    Error,
 }
 
 #[tauri::command]

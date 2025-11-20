@@ -18,7 +18,7 @@ const LogViewer: React.FC<LogViewerProps> = ({ logs, className }) => {
     return (
         <div
             ref={logViewerRef}
-            className={`bg-base-300 p-4 rounded-md h-48 overflow-y-scroll font-mono text-sm ${className || ''}`}
+            className={`h-40 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-3 font-mono text-xs text-foreground/80 ${className || ''}`}
         >
             {logs.length === 0 ? (
                 <p className="text-gray-500">No logs yet...</p>

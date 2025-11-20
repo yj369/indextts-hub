@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from '../context/WizardContext';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import LogViewer from '../components/LogViewer'; // Import LogViewer
+import LogViewer from '../components/LogViewer';
+import { Button } from '../components/ui/button';
+import MagicCard from '../components/MagicCard';
+import CipherRevealText from '../components/CipherRevealText';
+import { CheckCircle, XCircle, AlertCircle, Loader2, Download, BookOpen } from 'lucide-react';
 
 interface InstallToolsStepProps {
     onNext: (data: InstallToolsStepData) => void;
@@ -23,15 +27,18 @@ const InstallToolsStep: React.FC<InstallToolsStepProps> = ({ onNext, initialData
     const [installing, setInstalling] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        if (envCheckData?.toolStatus && !envCheckData.toolStatus.git_installed && !installing) {
-            // handleInstallAllMissing(); // Disabled auto-install for now, user clicks button
-        }
-    }, [envCheckData, installing]);
+    const isMounted = useRef(true); // To prevent state updates on unmounted component
 
+    useEffect(() => {
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
 
     const addLog = (message: string) => {
-        setInstallationLogs((prev) => [...prev, message]);
+        if (isMounted.current) {
+            setInstallationLogs((prev) => [...prev, message]);
+        }
     };
 
     const handleInstallGit = async () => {
@@ -39,12 +46,16 @@ const InstallToolsStep: React.FC<InstallToolsStepProps> = ({ onNext, initialData
         try {
             const result: string = await invoke('install_git_and_lfs');
             addLog(result);
-            setGitInstalled(true);
+            if (isMounted.current) {
+                setGitInstalled(true);
+            }
             return true;
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             addLog(`Error installing Git: ${errMsg}`);
-            setError(errMsg);
+            if (isMounted.current) {
+                setError(errMsg);
+            }
             return false;
         }
     };
@@ -54,35 +65,45 @@ const InstallToolsStep: React.FC<InstallToolsStepProps> = ({ onNext, initialData
         try {
             const result: string = await invoke('install_uv');
             addLog(result);
-            setUvInstalled(true);
+            if (isMounted.current) {
+                setUvInstalled(true);
+            }
             return true;
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             addLog(`Error installing uv: ${errMsg}`);
-            setError(errMsg);
+            if (isMounted.current) {
+                setError(errMsg);
+            }
             return false;
         }
     };
 
     const handleInstallAllMissing = async () => {
-        setInstalling(true);
-        setError(null);
-        setInstallationLogs([]);
+        if (isMounted.current) {
+            setInstalling(true);
+            setError(null);
+            setInstallationLogs([]);
+        }
 
         let success = true;
 
-        if (!envCheckData?.toolStatus?.git_installed) {
+        if (!envCheckData?.toolStatus?.git_installed && !gitInstalled) {
             success = await handleInstallGit() && success;
         } else {
             addLog("Git is already installed.");
-            setGitInstalled(true);
+            if (isMounted.current) {
+                setGitInstalled(true);
+            }
         }
 
-        if (!envCheckData?.toolStatus?.uv_installed) {
+        if (!envCheckData?.toolStatus?.uv_installed && !uvInstalled) {
             success = await handleInstallUv() && success;
         } else {
             addLog("uv is already installed.");
-            setUvInstalled(true);
+            if (isMounted.current) {
+                setUvInstalled(true);
+            }
         }
 
         if (success) {
@@ -90,7 +111,9 @@ const InstallToolsStep: React.FC<InstallToolsStepProps> = ({ onNext, initialData
         } else {
             addLog("Some tools failed to install. Please check logs for details.");
         }
-        setInstalling(false);
+        if (isMounted.current) {
+            setInstalling(false);
+        }
     };
 
     const handleOpenGitDownload = async () => {
@@ -105,50 +128,90 @@ const InstallToolsStep: React.FC<InstallToolsStepProps> = ({ onNext, initialData
         onNext({ gitInstalled, uvInstalled, installationLogs });
     };
 
+    const getToolStatusDisplay = (toolName: string, isInstalled: boolean, isInitiallyInstalled: boolean) => {
+        if (isInstalled) {
+            return (
+                <span className="flex items-center text-success">
+                    <CheckCircle className="w-4 h-4 mr-2" /> 已安装
+                </span>
+            );
+        } else if (installing && !isInitiallyInstalled) {
+            return (
+                <span className="flex items-center text-primary animate-pulse">
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 安装中
+                </span>
+            );
+        } else {
+            return (
+                <span className="flex items-center text-destructive">
+                    <XCircle className="w-4 h-4 mr-2" /> 未安装
+                </span>
+            );
+        }
+    };
+
     const isNextDisabled = installing || !gitInstalled || !uvInstalled;
 
     return (
         <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Install Basic Tools (Git, Git LFS, uv)</h2>
-            <p>This step will attempt to install any missing core tools required for IndexTTS2.</p>
+            <div className="text-center space-y-1.5">
+                <CipherRevealText text="安装依赖" className="text-2xl font-semibold" interval={80} />
+                <p className="text-xs text-foreground/60">Git / LFS 与 uv 必须就绪。</p>
+            </div>
 
-            {envCheckData && (
-                <div className="card bg-base-200 shadow-md p-4">
-                    <h3 className="card-title">Tools to install:</h3>
-                    <ul className="list-disc list-inside">
-                        {!envCheckData.toolStatus?.git_installed && <li>Git and Git LFS</li>}
-                        {!envCheckData.toolStatus?.uv_installed && <li>uv</li>}
-                        {envCheckData.toolStatus?.git_installed && envCheckData.toolStatus?.uv_installed && <li>All tools are already installed.</li>}
+            <div className="grid gap-3 sm:grid-cols-2">
+                <MagicCard className="p-3">
+                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em] mb-2">状态</h3>
+                    <ul className="list-none space-y-1.5 text-xs">
+                        <li className="flex justify-between items-center">
+                            <span>Git & LFS</span>
+                            {getToolStatusDisplay('Git & Git LFS', gitInstalled, !!envCheckData?.toolStatus?.git_installed)}
+                        </li>
+                        <li className="flex justify-between items-center">
+                            <span>uv</span>
+                            {getToolStatusDisplay('uv', uvInstalled, !!envCheckData?.toolStatus?.uv_installed)}
+                        </li>
                     </ul>
-                </div>
-            )}
-
-            <button className="btn btn-primary" onClick={handleInstallAllMissing} disabled={installing}>
-                {installing ? 'Installing...' : 'Install Missing Tools'}
-            </button>
-
-            {error && <div className="text-error-content bg-error p-2 rounded">{error}</div>}
-
-            {installationLogs.length > 0 && (
-                <LogViewer logs={installationLogs} />
-            )}
-
-            {/* Manual installation prompts if automatic fails or not applicable */}
-            {error && (
-                <div className="mt-4 p-4 bg-warning-content text-warning rounded-md">
-                    <p>Automatic installation failed or is not available for your system.</p>
-                    <p>Please consider manual installation:</p>
-                    <div className="flex gap-2 mt-2">
-                        <button className="btn btn-sm btn-outline" onClick={handleOpenGitDownload}>Download Git</button>
-                        <button className="btn btn-sm btn-outline" onClick={handleOpenUvDocs}>uv Installation Guide</button>
+                    <div className="pt-3 text-right">
+                        <Button onClick={handleInstallAllMissing} disabled={installing} size="sm">
+                            {installing ? (
+                                <span className="flex items-center">
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 安装中
+                                </span>
+                            ) : (
+                                '自动安装'
+                            )}
+                        </Button>
                     </div>
-                </div>
+                </MagicCard>
+
+                <MagicCard className="p-3 space-y-2">
+                    <h3 className="text-xs font-semibold text-foreground/70 uppercase tracking-[0.25em]">日志</h3>
+                    <LogViewer logs={installationLogs} className="h-28" />
+                </MagicCard>
+            </div>
+
+            {error && (
+                <MagicCard className="p-4 border-warning/60 bg-warning/10 text-warning space-y-3">
+                    <div className="flex items-center gap-2 text-xs">
+                        <AlertCircle className="w-4 h-4" />
+                        <span>{error}</span>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-2 text-xs">
+                        <Button variant="outline" size="sm" onClick={handleOpenGitDownload} className="gap-2">
+                            <Download className="w-4 h-4" /> Git 链接
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={handleOpenUvDocs} className="gap-2">
+                            <BookOpen className="w-4 h-4" /> uv 指南
+                        </Button>
+                    </div>
+                </MagicCard>
             )}
 
-            <div className="mt-6">
-                <button className="btn btn-primary" onClick={handleNext} disabled={isNextDisabled}>
-                    Continue
-                </button>
+            <div className="flex justify-end pt-2">
+                <Button onClick={handleNext} disabled={isNextDisabled} size="sm">
+                    继续
+                </Button>
             </div>
         </div>
     );

@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Dark Mode Defaults (Cyber Night) */
+  --background: #050505;
+  --foreground: #FFFFFF;
+  --text-secondary: #A0A0A0;
+  --border: rgba(255, 255, 255, 0.1);
+
+  --primary: #8B5CF6; /* Neon Purple */
+  --primary-foreground: #FFFFFF;
+
+  --secondary: #2DD4BF; /* Teal Cyan for some functional elements */
+  --secondary-foreground: #000000;
+
+  --accent: #E879F9; /* A lighter purple/pink for accent */
+  --accent-foreground: #000000;
+
+  --destructive: #EF4444; /* Standard Red */
+  --destructive-foreground: #FFFFFF;
+
+  --info: #3B82F6; /* Blue */
+  --success: #22C55E; /* Green */
+  --warning: #F59E0B; /* Orange */
+  --error: #EF4444; /* Red */
+
+  --input: #1F2937; /* Darker input background */
+  --ring: #8B5CF6; /* Neon Purple for focus rings */
+
+  /* Radius for consistency */
+  --radius: 0.5rem;
+
+  /* Card Colors */
+  --card: #0D0D1A; /* Darker background for cards */
+  --card-foreground: #FFFFFF; /* Light text for cards */
+}
+
+
+
+.light {
+  /* Light Mode Overrides (Laboratory Day) */
+  --background: #F9FAFB;
+  --foreground: #000000;
+  --text-secondary: #4B5563;
+  --border: rgba(0, 0, 0, 0.05);
+
+  --primary: #8B5CF6; /* Neon Purple - can be adjusted for light mode if needed */
+  --primary-foreground: #FFFFFF;
+
+  --secondary: #2DD4BF;
+  --secondary-foreground: #000000;
+
+  --accent: #A78BFA; /* Lighter accent for light mode */
+  --accent-foreground: #000000;
+
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+
+  --info: #2563EB;
+  --success: #16A34A;
+  --warning: #D97706;
+  --error: #DC2626;
+
+  --input: #FFFFFF;
+  --ring: #8B5CF6;
+}
+
+/* Base styles for the body to ensure full dark background */
+body {
+  margin: 0;
+  min-height: 100%;
+  @apply bg-background text-foreground;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+#root {
+  min-height: 100%;
+  background-color: var(--background);
+}
+
+/* Spotlight effect for MagicCard */
+.magic-card::before {
+  content: '';
+  position: absolute;
+  top: var(--mouse-y);
+  left: var(--mouse-x);
+  transform: translate(-50%, -50%);
+  width: 150px; /* --spotlight-size */
+  height: 150px; /* --spotlight-size */
+  background: radial-gradient(
+    circle at center,
+    rgba(var(--spotlight-color, 255, 255, 255), 0.1) 0%,
+    transparent 70%
+  );
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+  pointer-events: none;
+  z-index: 10;
+  mix-blend-mode: overlay; /* Blends the light effect */
+}
+
+.magic-card:hover::before {
+  opacity: 1;
+}
+
+@keyframes gradient-x {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-gradient-x {
+  background-size: 200% 200%;
+  animation: gradient-x 6s ease infinite;
+}
+
+@keyframes slide-up-fade {
+  0% {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up-fade {
+  animation: slide-up-fade 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.mask-image-gradient {
+  mask-image: linear-gradient(180deg, transparent, black 30%, black 70%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent, black 30%, black 70%, transparent);
+}
+
+.retro-grid {
+  background-color: #06030f;
+  background-image:
+    linear-gradient(rgba(139, 92, 246, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 92, 246, 0.1) 1px, transparent 1px);
+  background-size: 30px 30px;
+}

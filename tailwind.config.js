@@ -13,49 +13,60 @@ export default {
     			md: 'calc(var(--radius) - 2px)',
     			sm: 'calc(var(--radius) - 4px)'
     		},
-    		colors: {
-    			background: 'hsl(var(--background))',
-    			foreground: 'hsl(var(--foreground))',
-    			card: {
-    				DEFAULT: 'hsl(var(--card))',
-    				foreground: 'hsl(var(--card-foreground))'
-    			},
-    			popover: {
-    				DEFAULT: 'hsl(var(--popover))',
-    				foreground: 'hsl(var(--popover-foreground))'
-    			},
-    			primary: {
-    				DEFAULT: 'hsl(var(--primary))',
-    				foreground: 'hsl(var(--primary-foreground))'
-    			},
-    			secondary: {
-    				DEFAULT: 'hsl(var(--secondary))',
-    				foreground: 'hsl(var(--secondary-foreground))'
-    			},
-    			muted: {
-    				DEFAULT: 'hsl(var(--muted))',
-    				foreground: 'hsl(var(--muted-foreground))'
-    			},
-    			accent: {
-    				DEFAULT: 'hsl(var(--accent))',
-    				foreground: 'hsl(var(--accent-foreground))'
-    			},
-    			destructive: {
-    				DEFAULT: 'hsl(var(--destructive))',
-    				foreground: 'hsl(var(--destructive-foreground))'
-    			},
-    			border: 'hsl(var(--border))',
-    			input: 'hsl(var(--input))',
-    			ring: 'hsl(var(--ring))',
-    			chart: {
-    				'1': 'hsl(var(--chart-1))',
-    				'2': 'hsl(var(--chart-2))',
-    				'3': 'hsl(var(--chart-3))',
-    				'4': 'hsl(var(--chart-4))',
-    				'5': 'hsl(var(--chart-5))'
-    			}
-    		}
-    	}
+    		    colors: {
+    		    	// Core Palette - Dark Mode Defaults
+    		    	darkBg: '#050505',
+    		    	darkText: '#FFFFFF',
+    		    	darkTextSecondary: '#A0A0A0', // gray-400
+    		    	darkBorder: 'rgba(255, 255, 255, 0.1)', // border-white/10
+    		
+    		    	// Core Palette - Light Mode Defaults
+    		    	lightBg: '#F9FAFB', // gray-50
+    		    	lightText: '#000000',
+    		    	lightTextSecondary: '#4B5563', // gray-600
+    		    	lightBorder: 'rgba(0, 0, 0, 0.05)', // border-black/5
+    		
+    		    	// Accent Colors
+    		    	neonPurple: {
+    		    		DEFAULT: '#8B5CF6', // purple-500
+    		    		dark: '#7C3AED' // purple-600
+    		    	},
+    		    	tealCyan: '#2DD4BF', // teal-400
+    		    	functionalGreen: '#22C55E', // A standard green for status indicators
+    		    	functionalRed: '#EF4444', // A standard red for error indicators
+    		    	functionalWarning: '#F59E0B', // A standard yellow/orange for warnings
+    		
+    		    	// Semantic colors using CSS variables for dual-mode
+    		    	background: 'var(--background)',
+    		    	foreground: 'var(--foreground)',
+    		    	primary: {
+    		    		DEFAULT: 'var(--primary)',
+    		    		foreground: 'var(--primary-foreground)'
+    		    	},
+    		    	secondary: {
+    		    		DEFAULT: 'var(--secondary)',
+    		    		foreground: 'var(--secondary-foreground)'
+    		    	},
+    		    	accent: {
+    		    		DEFAULT: 'var(--accent)',
+    		    		foreground: 'var(--accent-foreground)'
+    		    	},
+    		    	destructive: {
+    		    		DEFAULT: 'var(--destructive)',
+    		    		foreground: 'var(--destructive-foreground)'
+    		    	},
+    		    	info: 'var(--info)',
+    		    	success: 'var(--success)',
+    		    	warning: 'var(--warning)',
+    		    	error: 'var(--error)',
+    		    	border: 'var(--border)',
+    		    	input: 'var(--input)',
+    		    	ring: 'var(--ring)',
+                        card: {
+                            DEFAULT: 'var(--card)',
+                            foreground: 'var(--card-foreground)'
+                        }
+    		    }    	}
     },
     plugins: [require("tailwindcss-animate")],
 }
