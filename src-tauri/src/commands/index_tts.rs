@@ -259,7 +259,6 @@ pub async fn setup_index_tts_env(app_handle: AppHandle, target_dir: String, netw
     let mut command = Command::new("uv");
     command
         .arg("sync")
-        .arg("--all-extras")
         .current_dir(&target_dir);
 
     if network_environment == "mainland_china" {
