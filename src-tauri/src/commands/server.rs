@@ -11,6 +11,32 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::time::sleep;
 
+#[cfg(target_os = "windows")]
+const WINDOWS_WEBUI_WRAPPER: &str = r#"
+import asyncio
+import json
+import os
+import runpy
+import sys
+
+try:
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+except AttributeError:
+    pass
+
+argv_json = os.environ.get("INDEXTTS_WEBUI_ARGS")
+if argv_json:
+    try:
+        sys.argv = json.loads(argv_json)
+    except Exception:
+        sys.argv = ["webui.py"]
+else:
+    sys.argv = ["webui.py"]
+
+runpy.run_path("webui.py", run_name="__main__")
+"#;
+
 // Define a struct to hold the child process, to be managed by Tauri State
 pub struct ServerChildProcess(Mutex<Option<Child>>);
 
@@ -61,23 +87,45 @@ pub async fn start_index_tts_server(
     let mut command = new_command("uv");
     command
         .arg("run")
-        .arg("webui.py")
-        .arg("--host")
-        .arg(&host)
-        .arg("--port")
-        .arg(port.to_string())
         .current_dir(&target_dir)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    let mut webui_args: Vec<String> = vec![
+        "--host".to_string(),
+        host,
+        "--port".to_string(),
+        port.to_string(),
+    ];
+
     if let Some(p) = precision {
         if p == "fp16" {
-            command.arg("--fp16");
+            webui_args.push("--fp16".to_string());
         }
     }
 
     if device == "cuda" {
-        command.arg("--cuda_kernel");
+        webui_args.push("--cuda_kernel".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut argv: Vec<String> = Vec::with_capacity(webui_args.len() + 1);
+        argv.push("webui.py".to_string());
+        argv.extend(webui_args);
+
+        let args_json =
+            serde_json::to_string(&argv).map_err(|e| format!("Failed to encode launch args: {}", e))?;
+        command
+            .arg("python")
+            .arg("-c")
+            .arg(WINDOWS_WEBUI_WRAPPER)
+            .env("INDEXTTS_WEBUI_ARGS", args_json);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        command.arg("webui.py").args(&webui_args);
     }
 
     // Pass HF_ENDPOINT if it's set in the environment or needed
