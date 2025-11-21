@@ -3,8 +3,8 @@ name: publish tauri app
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - main           # 任何 merge / rebase 到 main 的 push 都会触发
+  workflow_dispatch:    # 允许在 Actions 页面手动点一发
 
 jobs:
   publish-tauri:
@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'   # 只构建 M 芯片版 (Apple Silicon)
+            args: '--target aarch64-apple-darwin'   # 只构建 M 芯片版
           - platform: windows-latest
             args: ''                                # Windows x64
 
@@ -26,20 +26,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Node + pnpm（先装好 pnpm，后面的 tauri-action 才能用到）
+      # Node + npm
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+          cache: 'npm'          # 使用 npm 缓存
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9              # 按你本地的 pnpm 版本改也可以
-          run_install: true       # 自动执行 pnpm install
+      - name: Install dependencies
+        run: npm install        # 安装前端依赖（包含 @tauri-apps/cli 等）
 
-      # Rust toolchain（不用额外指定 targets，默认就会装当前平台的）
+      # Rust toolchain（默认安装当前平台的 stable）
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
@@ -48,10 +45,9 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      # 如果没有在 tauri.conf.json 里的 beforeBuildCommand 里写前端构建命令
-      # 可以在这里主动 build 一下前端：
+      # 如果你没有在 tauri.conf.json 里配置 beforeBuildCommand，可以在这手动 build 前端
       # - name: Build frontend
-      #   run: pnpm build
+      #   run: npm run build
 
       - name: Build & Release with Tauri
         uses: tauri-apps/tauri-action@v0
@@ -61,6 +57,7 @@ jobs:
           tagName: app-v__VERSION__          # __VERSION__ 会被替换为 tauri 配置里的 version
           releaseName: 'IndexTTS Hub v__VERSION__'
           releaseBody: '请在 Assets 中下载对应平台安装包。'
-          releaseDraft: true                 # 先建成 draft，你检查 OK 再点发布
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+          tauriScript: 'npm run tauri'      # 强制使用 npm，而不是自动检测 pnpm / yarn
