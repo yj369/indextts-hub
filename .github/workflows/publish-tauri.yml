@@ -3,8 +3,8 @@ name: publish tauri app
 on:
   push:
     branches:
-      - main           # 任何 merge / rebase 到 main 的 push 都会触发
-  workflow_dispatch:    # 允许在 Actions 页面手动手动运行
+      - main
+  workflow_dispatch:
 
 jobs:
   publish-tauri:
