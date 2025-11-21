@@ -507,7 +507,7 @@ const LogViewer: React.FC<{ logs: string[], className?: string, title?: string, 
                             <span className="text-gray-700 select-none w-6 text-right shrink-0">{(index + 1).toString().padStart(2, '0')}</span>
                             <span className={cn(
                                 "font-mono",
-                                log.toLowerCase().includes('error') || log.includes('失败') ? 'text-red-400' : 
+                                log.toLowerCase().includes('error') || log.includes('失败') || log.includes('|STDERR') ? 'text-red-400' : 
                                 log.toLowerCase().includes('success') || log.includes('成功') ? 'text-green-400' : 
                                 log.includes('>>>') ? 'text-purple-400 font-bold' : 'text-gray-300'
                             )}>
@@ -1081,8 +1081,10 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
         listen<CoreDeployLogPayload>('core-deploy-log', (event) => {
             const payload = event.payload;
             if (!payload?.line) return;
-            const prefix = payload.step ? `[${payload.step}] ` : '';
-            setLogs(l => [...l, `${prefix}${payload.line}`]);
+            const cleanedLine = payload.line.replace(/\r/g, '');
+            const tags = [payload.step, payload.stream?.toUpperCase()].filter(Boolean).join('|');
+            const prefix = tags ? `[${tags}] ` : '';
+            setLogs(l => [...l, `${prefix}${cleanedLine}`]);
         })
         .then((fn) => {
             unlisten = fn;
@@ -1104,9 +1106,32 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
         }
     }, [indexTtsRepoDir, path]);
 
+    const buildCommandPreview = (cmd: string) => {
+        switch (cmd) {
+            case 'clone_index_tts_repo':
+                return `git clone https://github.com/index-tts/index-tts.git "${path}"`;
+            case 'init_git_lfs':
+                return `git -C "${path}" lfs install && git -C "${path}" lfs pull`;
+            case 'setup_index_tts_env': {
+                const mirror = isChina ? ' --default-index https://pypi.tuna.tsinghua.edu.cn/simple' : '';
+                return `uv sync --all-extras${mirror}`.trim();
+            }
+            case 'download_index_tts_model': {
+                if (isChina) {
+                    return 'uv run modelscope download --model IndexTeam/IndexTTS-2 --local_dir checkpoints';
+                }
+                return 'uv run hf download IndexTeam/IndexTTS-2 --local-dir checkpoints';
+            }
+            default:
+                return '';
+        }
+    };
+
     const startDeployment = async () => {
+        if (!path) return;
         setIsRunning(true);
-        setLogs(l => [...l, ">>> 初始化 IndexTTS 部署序列..."]);
+        setProgressStep(0);
+        setLogs([">>> 初始化 IndexTTS 部署序列..."]);
         
         const steps = [
             {step:1, msg:"[1/4] 克隆核心仓库...", cmd:'clone_index_tts_repo', args: { target_dir: path } }, 
@@ -1118,6 +1143,10 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
         for (const s of steps) { 
             setProgressStep(s.step); 
             setLogs(l => [...l, s.msg]); 
+            const preview = buildCommandPreview(s.cmd);
+            if (preview) {
+                setLogs(l => [...l, `   $ ${preview}`]);
+            }
             // Correctly pass args to tauriInvoke
             const result = await tauriInvoke(s.cmd, s.args); 
             if (result !== "SUCCESS") {
@@ -1693,7 +1722,19 @@ const App: React.FC = () => {
                                     <div className="flex items-center gap-2"><BrandLogo className="w-6 h-6" /><span className="font-bold text-sm tracking-wider">IndexTTS <span className="text-gray-500">HUB</span></span></div>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                    {!isServerControl ? <WizardProgress currentStep={step} totalSteps={steps.length - 1} /> : <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-gray-400 animate-[fadeIn_0.5s_ease-out]"><LayoutDashboard className="w-3 h-3" /> 控制台模式</div>} 
+                                    {!isServerControl ? (
+                                        <WizardProgress currentStep={step} totalSteps={steps.length - 1} />
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => goToStep(0)}
+                                            className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-gray-400 animate-[fadeIn_0.5s_ease-out] cursor-pointer hover:text-white hover:bg-white/10 transition-colors"
+                                            title="点击切换到引导流程"
+                                        >
+                                            <LayoutDashboard className="w-3 h-3" />
+                                            <span>控制台模式</span>
+                                        </button>
+                                    )} 
                                 </div>
                             </div>
                             <div className="flex-1 p-6 overflow-hidden flex flex-col relative z-20"><div className="flex-1 h-full">{steps[step]}</div></div>
