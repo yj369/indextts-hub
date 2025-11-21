@@ -27,6 +27,12 @@ fn emit_core_deploy_log(app_handle: &AppHandle, step: &str, stream: &str, line: 
     let _ = app_handle.emit(CORE_DEPLOY_EVENT, payload);
 }
 
+fn repo_has_core_files(path: &Path) -> bool {
+    let pyproject = path.join("pyproject.toml");
+    let webui = path.join("webui.py");
+    pyproject.exists() && webui.exists()
+}
+
 async fn run_command_with_streaming(
     app_handle: &AppHandle,
     step: &str,
@@ -83,6 +89,24 @@ async fn run_command_with_streaming(
     Ok(())
 }
 
+async fn repair_existing_repo(app_handle: &AppHandle, target_dir: &str) -> Result<(), String> {
+    let mut reset_cmd = Command::new("git");
+    reset_cmd
+        .arg("-C")
+        .arg(target_dir)
+        .args(["reset", "--hard", "HEAD"]);
+    run_command_with_streaming(app_handle, "repair_repo_reset", reset_cmd).await?;
+
+    let mut clean_cmd = Command::new("git");
+    clean_cmd
+        .arg("-C")
+        .arg(target_dir)
+        .args(["clean", "-fdx"]);
+    run_command_with_streaming(app_handle, "repair_repo_clean", clean_cmd).await?;
+
+    Ok(())
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn clone_index_tts_repo(app_handle: AppHandle, target_dir: String) -> Result<String, String> {
     let repo_url = "https://github.com/index-tts/index-tts.git";
@@ -101,8 +125,45 @@ pub async fn clone_index_tts_repo(app_handle: AppHandle, target_dir: String) -> 
             .map_err(|e| format!("Failed to check if {} is a git repo: {}", target_dir, e))?;
 
         if is_git_repo.status.success() {
-            emit_core_deploy_log(&app_handle, "clone_repo", "stdout", "目标目录已存在，跳过克隆。");
-            return Ok("SUCCESS".to_string());
+            if repo_has_core_files(target_path) {
+                emit_core_deploy_log(&app_handle, "clone_repo", "stdout", "目标目录已存在，跳过克隆。");
+                return Ok("SUCCESS".to_string());
+            }
+
+            emit_core_deploy_log(
+                &app_handle,
+                "clone_repo",
+                "stderr",
+                "检测到现有仓库缺少关键文件，尝试自动恢复...",
+            );
+
+            if let Err(err) = repair_existing_repo(&app_handle, &target_dir).await {
+                emit_core_deploy_log(
+                    &app_handle,
+                    "clone_repo",
+                    "stderr",
+                    &format!("自动恢复失败: {}", err),
+                );
+                return Err(format!(
+                    "Existing repository at '{}' is missing required files and could not be repaired. Please clean the directory and retry.",
+                    target_dir
+                ));
+            }
+
+            if repo_has_core_files(target_path) {
+                emit_core_deploy_log(
+                    &app_handle,
+                    "clone_repo",
+                    "stdout",
+                    "仓库修复完成，跳过重新克隆。",
+                );
+                return Ok("SUCCESS".to_string());
+            }
+
+            return Err(format!(
+                "Repository at '{}' is still missing required files after repair. Please remove the folder and deploy again.",
+                target_dir
+            ));
         } else {
             return Err(format!("Target directory '{}' exists but is not a git repository.", target_dir));
         }
@@ -202,12 +263,6 @@ pub enum ModelSource {
     ModelScope,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ModelDownloadLogEvent {
-    pub stream: String,
-    pub line: String,
-}
-
 #[tauri::command(rename_all = "snake_case")]
 pub async fn download_index_tts_model(
     app_handle: AppHandle,
@@ -222,103 +277,27 @@ pub async fn download_index_tts_model(
     };
 
     let use_hf_mirror = network_environment == "mainland_china";
+    let local_dir = model_save_path.unwrap_or_else(|| "checkpoints".to_string());
 
-
-    let mut command_args: Vec<&str> = Vec::new();
     let mut command = Command::new("uv");
     command.current_dir(&target_dir);
 
     match model_source {
         ModelSource::HuggingFace => {
-            command_args.extend_from_slice(&["run", "hf"]);
-            command_args.extend_from_slice(&["download", "IndexTeam/IndexTTS-2"]);
-            if let Some(path) = &model_save_path {
-                command_args.extend_from_slice(&["--local-dir", path]);
-            } else {
-                command_args.extend_from_slice(&["--local-dir", "checkpoints"]);
-            }
+            command.args(["run", "hf", "download", "IndexTeam/IndexTTS-2"]);
+            command.arg("--local-dir").arg(&local_dir);
 
             if use_hf_mirror {
                 command.env("HF_ENDPOINT", "https://hf-mirror.com");
             }
         },
         ModelSource::ModelScope => {
-            command_args.extend_from_slice(&["run", "modelscope"]);
-            command_args.extend_from_slice(&["download", "--model", "IndexTeam/IndexTTS-2"]);
-            if let Some(path) = &model_save_path {
-                command_args.extend_from_slice(&["--local_dir", path]);
-            } else {
-                command_args.extend_from_slice(&["--local_dir", "checkpoints"]);
-            }
+            command.args(["run", "modelscope", "download", "--model", "IndexTeam/IndexTTS-2"]);
+            command.arg("--local_dir").arg(&local_dir);
         },
     }
-    command.args(&command_args);
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Failed to execute model download command: {}", e))?;
-
-    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    const EVENT_NAME: &str = "model-download-log";
-
-    if let Some(stdout) = child.stdout.take() {
-        let handle_clone = app_handle.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let payload = ModelDownloadLogEvent {
-                    stream: "stdout".to_string(),
-                    line,
-                };
-                let _ = handle_clone.emit(EVENT_NAME, &payload);
-            }
-        });
-    }
-
-    if let Some(stderr) = child.stderr.take() {
-        let handle_clone = app_handle.clone();
-        let stderr_accumulator = stderr_lines.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                {
-                    let mut buffer = stderr_accumulator
-                        .lock()
-                        .expect("stderr accumulator poisoned");
-                    buffer.push(line.clone());
-                }
-
-                let payload = ModelDownloadLogEvent {
-                    stream: "stderr".to_string(),
-                    line,
-                };
-                let _ = handle_clone.emit(EVENT_NAME, &payload);
-            }
-        });
-    }
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Failed to wait for model download command: {}", e))?;
-
-    if !status.success() {
-        let stderr_output = {
-            let buffer = stderr_lines
-                .lock()
-                .expect("stderr accumulator poisoned");
-            buffer.join("\n")
-        };
-
-        if stderr_output.is_empty() {
-            return Err("Model download failed with no additional output. Please check the logs.".to_string());
-        } else {
-            return Err(format!("Model download failed: {}", stderr_output));
-        }
-    }
-
+    run_command_with_streaming(&app_handle, "download_model", command).await?;
     Ok("SUCCESS".to_string())
 }
 
