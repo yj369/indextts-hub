@@ -2,11 +2,11 @@
 
 use super::command_utils::{configure_command, new_command};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::{env, fs};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -317,9 +317,17 @@ pub async fn setup_index_tts_env(
     network_environment: String,
 ) -> Result<String, String> {
     let use_china_mirror = network_environment == "mainland_china";
+    let is_windows = env::consts::OS == "windows";
 
     let mut command = new_command("uv");
     command.arg("sync").current_dir(&target_dir);
+
+    if is_windows {
+        // Windows users are encouraged to avoid the heavy extras such as DeepSpeed.
+        command.args(["--extra", "webui"]);
+    } else {
+        command.arg("--all-extras");
+    }
 
     if use_china_mirror {
         command
@@ -328,21 +336,6 @@ pub async fn setup_index_tts_env(
     }
 
     run_command_with_streaming(&app_handle, "setup_env", command).await?;
-
-    let mut install_gradio_cmd = new_command("uv");
-    install_gradio_cmd
-        .arg("pip")
-        .arg("install")
-        .arg("gradio")
-        .current_dir(&target_dir);
-
-    if use_china_mirror {
-        install_gradio_cmd
-            .arg("--index-url")
-            .arg("https://pypi.tuna.tsinghua.edu.cn/simple");
-    }
-
-    run_command_with_streaming(&app_handle, "install_gradio", install_gradio_cmd).await?;
     Ok("SUCCESS".to_string())
 }
 
@@ -399,12 +392,25 @@ pub async fn download_index_tts_model(
     let use_hf_mirror = network_environment == "mainland_china";
     let local_dir = model_save_path.unwrap_or_else(|| "checkpoints".to_string());
 
+    let (tool_spec, tool_name) = match model_source {
+        ModelSource::HuggingFace => ("huggingface-hub[cli,hf_xet]", "hf"),
+        ModelSource::ModelScope => ("modelscope", "modelscope"),
+    };
+
+    let mut install_cmd = new_command("uv");
+    install_cmd.arg("tool").arg("install").arg(tool_spec);
+    run_command_with_streaming(&app_handle, "install_model_tool", install_cmd).await?;
+
     let mut command = new_command("uv");
-    command.current_dir(&target_dir);
+    command
+        .arg("tool")
+        .arg("run")
+        .arg(tool_name)
+        .current_dir(&target_dir);
 
     match model_source {
         ModelSource::HuggingFace => {
-            command.args(["run", "hf", "download", "IndexTeam/IndexTTS-2"]);
+            command.args(["download", "IndexTeam/IndexTTS-2"]);
             command.arg("--local-dir").arg(&local_dir);
 
             if use_hf_mirror {
@@ -412,13 +418,8 @@ pub async fn download_index_tts_model(
             }
         }
         ModelSource::ModelScope => {
-            command.args([
-                "run",
-                "modelscope",
-                "download",
-                "--model",
-                "IndexTeam/IndexTTS-2",
-            ]);
+            command
+                .args(["download", "--model", "IndexTeam/IndexTTS-2"]);
             command.arg("--local_dir").arg(&local_dir);
         }
     }

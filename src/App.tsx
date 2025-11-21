@@ -1067,13 +1067,15 @@ const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?
 };
 
 const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext }) => {
-    const { networkEnvironment, setIndexTtsRepoDir, indexTtsRepoDir } = useWizard();
+    const { networkEnvironment, setIndexTtsRepoDir, indexTtsRepoDir, envCheckData } = useWizard();
     const [path, setPath] = useState("");
     const [logs, setLogs] = useState<string[]>([]);
     const [progressStep, setProgressStep] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const isChina = networkEnvironment === 'mainland_china';
     const modelSource = isChina ? "ModelScope (CN)" : "HuggingFace (Global)";
+    const osLabel = envCheckData?.systemInfo?.os;
+    const isWindowsPlatform = typeof osLabel === 'string' && osLabel.toLowerCase().includes('windows');
 
     useEffect(() => {
         if (!isTauriEnvironment) return;
@@ -1113,17 +1115,18 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
             case 'init_git_lfs':
                 return `git -C "${path}" lfs install && git -C "${path}" lfs pull`;
             case 'setup_index_tts_env': {
-                const mirror = isChina ? ' --default-index https://pypi.tuna.tsinghua.edu.cn/simple' : '';
-                const pipMirror = isChina ? ' --index-url https://pypi.tuna.tsinghua.edu.cn/simple' : '';
-                const syncCmd = `uv sync${mirror}`.trim();
-                const installCmd = `uv pip install${pipMirror} gradio`.trim();
-                return `${syncCmd} && ${installCmd}`;
+                const syncParts = ['uv sync'];
+                syncParts.push(isWindowsPlatform ? '--extra webui' : '--all-extras');
+                if (isChina) {
+                    syncParts.push('--default-index https://pypi.tuna.tsinghua.edu.cn/simple');
+                }
+                return syncParts.join(' ');
             }
             case 'download_index_tts_model': {
                 if (isChina) {
-                    return 'uv run modelscope download --model IndexTeam/IndexTTS-2 --local_dir checkpoints';
+                    return 'uv tool install "modelscope" && uv tool run modelscope download --model IndexTeam/IndexTTS-2 --local_dir checkpoints';
                 }
-                return 'uv run hf download IndexTeam/IndexTTS-2 --local-dir checkpoints';
+                return 'uv tool install "huggingface-hub[cli,hf_xet]" && uv tool run hf download IndexTeam/IndexTTS-2 --local-dir checkpoints';
             }
             default:
                 return '';
