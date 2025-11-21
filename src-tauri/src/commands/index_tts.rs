@@ -1,6 +1,7 @@
 // src-tauri/src/commands/index_tts.rs
 
 use serde::{Serialize, Deserialize};
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -31,6 +32,17 @@ fn repo_has_core_files(path: &Path) -> bool {
     let pyproject = path.join("pyproject.toml");
     let webui = path.join("webui.py");
     pyproject.exists() && webui.exists()
+}
+
+fn directory_is_empty(path: &Path) -> Result<bool, String> {
+    match fs::read_dir(path) {
+        Ok(mut entries) => Ok(entries.next().is_none()),
+        Err(e) => Err(format!(
+            "Failed to inspect directory '{}': {}",
+            path.display(),
+            e
+        )),
+    }
 }
 
 async fn run_command_with_streaming(
@@ -165,7 +177,29 @@ pub async fn clone_index_tts_repo(app_handle: AppHandle, target_dir: String) -> 
                 target_dir
             ));
         } else {
-            return Err(format!("Target directory '{}' exists but is not a git repository.", target_dir));
+            match directory_is_empty(target_path) {
+                Ok(true) => {
+                    emit_core_deploy_log(
+                        &app_handle,
+                        "clone_repo",
+                        "stdout",
+                        "检测到一个空目录，自动清理后继续克隆。",
+                    );
+                    fs::remove_dir_all(target_path).map_err(|e| {
+                        format!(
+                            "Failed to reset empty target directory '{}': {}",
+                            target_dir, e
+                        )
+                    })?;
+                }
+                Ok(false) => {
+                    return Err(format!(
+                        "Target directory '{}' exists, is not a git repository, and contains files. Please choose an empty directory or clean it before retrying.",
+                        target_dir
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
