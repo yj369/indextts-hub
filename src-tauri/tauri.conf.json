@@ -14,9 +14,9 @@
       {
         "title": "indextts-hub",
         "width": 800,
-        "height": 720,
+        "height": 600,
         "minWidth": 800,
-        "minHeight": 720,
+        "minHeight": 600,
         "hiddenTitle": true,
         "titleBarStyle": "Transparent",
         "resizable": false
@@ -44,7 +44,7 @@
     "shell": {
       "open": true
     },
-    "dialog": {},
+    "dialog": null,
     "updater": {
       "active": true,
       "endpoints": [

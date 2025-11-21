@@ -27,9 +27,10 @@ impl ServerChildProcess {
 pub enum ServerStatus {
     Running,
     Stopped,
+    Starting,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn start_index_tts_server(
     app_handle: AppHandle,
     target_dir: String,
@@ -44,20 +45,35 @@ pub async fn start_index_tts_server(
         return Err("Server is already running.".to_string());
     }
 
+    let repo_path = Path::new(&target_dir);
+    if !repo_path.exists() {
+        return Err(format!("Target directory does not exist: {}", target_dir));
+    }
+    let app_entry = repo_path.join("webui.py");
+    if !app_entry.exists() {
+        return Err(format!(
+            "webui.py not found in {}. Please complete the deployment first.",
+            repo_path.display()
+        ));
+    }
+
     let mut command = TokioCommand::new("uv");
     command.arg("run")
-           .arg("app.py") // Assuming the entry point is app.py now
+           .arg("webui.py")
            .arg("--host").arg(&host)
            .arg("--port").arg(port.to_string())
-           .arg("--device").arg(&device)
            .current_dir(&target_dir)
            .stdout(std::process::Stdio::piped())
            .stderr(std::process::Stdio::piped());
 
     if let Some(p) = precision {
         if p == "fp16" {
-            command.arg("--precision").arg("fp16");
+            command.arg("--fp16");
         }
+    }
+
+    if device == "cuda" {
+        command.arg("--cuda_kernel");
     }
 
     // Pass HF_ENDPOINT if it's set in the environment or needed
@@ -89,7 +105,7 @@ pub async fn start_index_tts_server(
 
     *guard = Some(child);
 
-    Ok(ServerStatus::Running)
+    Ok(ServerStatus::Starting)
 }
 
 #[tauri::command]
@@ -117,11 +133,14 @@ pub async fn stop_index_tts_server(state: State<'_, ServerChildProcess>) -> Resu
 pub async fn get_server_status(state: State<'_, ServerChildProcess>) -> Result<ServerStatus, String> {
     let mut guard = state.lock();
     if let Some(child) = guard.as_mut() {
-        if child.try_wait().map_err(|e| format!("Error checking child status: {}", e))?.is_none() {
-            Ok(ServerStatus::Running)
-        } else {
-            *guard = None;
-            Ok(ServerStatus::Stopped)
+        match child.try_wait().map_err(|e| format!("Error checking child status: {}", e))? {
+            Some(_status) => {
+                *guard = None;
+                Ok(ServerStatus::Stopped)
+            }
+            None => {
+                Ok(ServerStatus::Running)
+            }
         }
     } else {
         Ok(ServerStatus::Stopped)
@@ -136,7 +155,7 @@ pub struct RepoUpdateInfo {
     pub message: String,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, String> {
     let repo_path = Path::new(&target_dir);
     if !repo_path.exists() || !repo_path.is_dir() {
@@ -199,7 +218,7 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn pull_repo(target_dir: String) -> Result<String, String> {
     let repo_path = Path::new(&target_dir);
     if !repo_path.exists() || !repo_path.is_dir() {

@@ -11,29 +11,141 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openUrl } from '@tauri-apps/plugin-shell';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+
+const hasTauriInternals =
+  typeof window !== 'undefined' &&
+  (Boolean((window as any).__TAURI_INTERNALS__) ||
+    Boolean((window as any).__TAURI_IPC__));
+
+const forceMock =
+  typeof import.meta !== 'undefined' &&
+  (import.meta as any).env?.VITE_USE_TAURI_MOCK === '1';
+
+const isTauriEnvironment = hasTauriInternals && !forceMock;
+
+// --- 浏览器环境下使用的模拟 API ---
+const mockInvoke = async (cmd: string, args?: any): Promise<any> => {
+  await new Promise((resolve) => setTimeout(resolve, 400));
+
+  switch (cmd) {
+    case 'get_system_info':
+      return {
+        os: 'Windows 11 专业版',
+        cpu_brand: 'Intel(R) Core(TM) i9-13900K',
+        cpu_cores: 24,
+        total_memory_gb: 64.0,
+        available_memory_gb: 32.5,
+        total_disk_gb: 2048.0,
+        available_disk_gb: 1024.0,
+        gpu_info: {
+          name: 'NVIDIA GeForce RTX 4090',
+          vram_gb: 24.0,
+          driver_version: '536.23',
+          has_cuda: true,
+          cuda_available: true,
+        },
+      };
+    case 'check_tools':
+      return {
+        git_installed: false,
+        git_lfs_installed: false,
+        python_installed: false,
+        uv_installed: false,
+        cuda_toolkit_installed: false,
+      };
+    case 'check_index_tts_repo':
+      return false;
+    case 'install_git_and_lfs':
+    case 'install_uv':
+    case 'install_python':
+    case 'clone_index_tts_repo':
+    case 'init_git_lfs':
+    case 'setup_index_tts_env':
+    case 'install_hf_or_modelscope_tools':
+    case 'download_index_tts_model':
+      return 'SUCCESS';
+    case 'run_gpu_check':
+      return {
+        has_cuda: true,
+        name: 'NVIDIA GeForce RTX 4090',
+        vram_gb: 24.0,
+        recommended_fp16: true,
+      };
+    case 'start_index_tts_server':
+      return 'Running';
+    case 'stop_index_tts_server':
+      return 'Stopped';
+    case 'check_repo_update': {
+      const hasUpdate = Math.random() > 0.5;
+      return {
+        has_update: hasUpdate,
+        local_hash: '7f8a9b1',
+        remote_hash: hasUpdate ? '3c2d1e0' : '7f8a9b1',
+        message: hasUpdate
+          ? 'Feat: 优化了显存占用与推理速度 (v1.2.0)'
+          : '当前已是最新版本',
+      };
+    }
+    case 'pull_repo':
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return 'SUCCESS';
+    default:
+      console.warn(`mockInvoke: 未实现的命令 ${cmd}`, args);
+      return null;
+  }
+};
+
+const mockOpenUrl = (url: string) => {
+  if (typeof window !== 'undefined') {
+    window.open(url, '_blank');
+    return;
+  }
+  console.log(`Opening URL: ${url}`);
+};
+
+const mockOpenDialog = async (): Promise<string | string[] | null> => {
+  return 'C:\\\\Users\\\\MockUser\\\\Projects\\\\index-tts';
+};
+
+const WEBUI_URL = "http://127.0.0.1:7860";
 
 // --- 工具函数 ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const formatGb = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--';
+  const absValue = Math.abs(value);
+  const formatted =
+    absValue >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${formatted} GB`;
+};
+
 // --- 模拟后端 API ---
 const tauriInvoke = async (cmd: string, args?: any): Promise<any> => {
-  // 模拟网络延迟
-  // await new Promise(resolve => setTimeout(resolve, 400)); 
+  if (!isTauriEnvironment) {
+    return mockInvoke(cmd, args);
+  }
 
-  // Use actual Tauri invoke
   return await invoke(cmd, args);
 };
 
 const tauriOpenUrl = (url: string) => {
-  console.log(`Opening URL: ${url}`); 
+  if (!isTauriEnvironment) {
+    mockOpenUrl(url);
+    return;
+  }
   openUrl(url);
 };
 
 const tauriOpenDialog = async (): Promise<string | string[] | null> => {
+  if (!isTauriEnvironment) {
+    return mockOpenDialog();
+  }
   const result = await openDialog({
     directory: true,
     title: '选择 IndexTTS 仓库目录',
@@ -43,19 +155,57 @@ const tauriOpenDialog = async (): Promise<string | string[] | null> => {
 
 
 // --- 上下文定义 ---
+type WizardState = {
+  networkEnvironment: string;
+  indexTtsRepoDir: string | null;
+  computeConfig: { useGpu: boolean; useFp16: boolean };
+  envCheckData: any;
+  installToolsData: any;
+  indexTtsSetupData: any;
+  modelDownloadData: any;
+  serverControlData: any;
+};
+
+const defaultWizardState: WizardState = {
+  networkEnvironment: 'mainland_china',
+  indexTtsRepoDir: null,
+  computeConfig: { useGpu: true, useFp16: true },
+  envCheckData: null,
+  installToolsData: null,
+  indexTtsSetupData: null,
+  modelDownloadData: null,
+  serverControlData: null,
+};
+
+const STORAGE_KEY = 'indextts-wizard-state';
+
+const loadWizardState = (): WizardState => {
+  if (typeof window === 'undefined') return defaultWizardState;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...defaultWizardState, ...parsed };
+    }
+  } catch (err) {
+    console.warn('Failed to load wizard state from storage', err);
+  }
+  return defaultWizardState;
+};
+
 const WizardContext = createContext<any>(undefined);
 
 const WizardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, setState] = useState({
-    networkEnvironment: 'mainland_china',
-    indexTtsRepoDir: null,
-    computeConfig: { useGpu: true, useFp16: true },
-    envCheckData: null,
-    installToolsData: null,
-    indexTtsSetupData: null,
-    modelDownloadData: null,
-    serverControlData: null,
-  });
+  const [state, setState] = useState<WizardState>(() => loadWizardState());
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.warn('Failed to persist wizard state', err);
+    }
+  }, [state]);
 
   const updateState = (key: string, value: any) => {
     setState(prev => ({ ...prev, [key]: value }));
@@ -77,6 +227,16 @@ const WizardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
 };
 
 const useWizard = () => useContext(WizardContext);
+
+type CoreDeployLogPayload = {
+  step?: string;
+  stream?: string;
+  line?: string;
+};
+
+type ServerLogPayload = string;
+
+type EngineStatus = 'Stopped' | 'Starting' | 'Running';
 
 // --- UI Components ---
 
@@ -519,7 +679,8 @@ const SplashScreen: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
 // --- 向导步骤组件 ---
 
 const NetworkSelectStep: React.FC<{ onNext: (data: any) => void, initialData?: any }> = ({ onNext, initialData }) => {
-    const [network, setNetwork] = useState(initialData?.networkEnvironment || 'mainland_china');
+    const { networkEnvironment, setNetworkEnvironment } = useWizard();
+    const [network, setNetwork] = useState(initialData?.networkEnvironment || networkEnvironment || 'mainland_china');
     const [pingResults, setPingResults] = useState<{
         mainland_china: { loading: boolean, result: string | null, error: boolean },
         overseas: { loading: boolean, result: string | null, error: boolean }
@@ -535,6 +696,12 @@ const NetworkSelectStep: React.FC<{ onNext: (data: any) => void, initialData?: a
         const latency = region === 'mainland_china' ? Math.floor(Math.random() * 35) + 15 : Math.floor(Math.random() * 200) + 180;
         setPingResults(prev => ({ ...prev, [region]: { loading: false, result: `${latency}ms`, error: false } }));
     };
+
+    useEffect(() => {
+        runPing('mainland_china');
+        runPing('overseas');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     return (
         <div className="h-full flex flex-col relative">
@@ -659,7 +826,10 @@ const NetworkSelectStep: React.FC<{ onNext: (data: any) => void, initialData?: a
                 <Button 
                     variant={network === 'mainland_china' ? 'teal' : 'default'}
                     size="lg" 
-                    onClick={() => onNext({ networkEnvironment: network })} 
+                    onClick={() => {
+                        setNetworkEnvironment(network);
+                        onNext({ networkEnvironment: network });
+                    }} 
                     className="w-full shadow-lg transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] animate-[fadeIn_0.5s_ease-out_0.4s_both]"
                 >
                     确认并继续 <ArrowRight className="w-4 h-4 ml-2" />
@@ -670,6 +840,7 @@ const NetworkSelectStep: React.FC<{ onNext: (data: any) => void, initialData?: a
 };
 
 const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?: any }> = ({ onNext, initialData }) => {
+    const { setEnvCheckData } = useWizard();
     const [info, setInfo] = useState(initialData?.systemInfo);
     const [tools, setTools] = useState(initialData?.toolStatus);
     const [loading, setLoading] = useState(false);
@@ -686,6 +857,7 @@ const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?
             const [sys, tls] = await Promise.all([tauriInvoke('get_system_info'), tauriInvoke('check_tools')]);
             setInfo(sys);
             setTools(tls);
+            setEnvCheckData({ systemInfo: sys, toolStatus: tls });
             
             const initialStatus: any = {};
             if (!tls.git_installed) initialStatus.git = 'idle';
@@ -733,10 +905,18 @@ const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?
 
             setInstallStatus(prev => ({...prev, [toolKey]: 'done'}));
             setTools((prev: any) => {
-                if (toolKey === 'git') return { ...prev, git_installed: true, git_lfs_installed: true };
-                if (toolKey === 'python') return { ...prev, python_installed: true };
-                if (toolKey === 'uv') return { ...prev, uv_installed: true };
-                return prev;
+                const updated =
+                    toolKey === 'git'
+                        ? { ...prev, git_installed: true, git_lfs_installed: true }
+                        : toolKey === 'python'
+                        ? { ...prev, python_installed: true }
+                        : toolKey === 'uv'
+                        ? { ...prev, uv_installed: true }
+                        : prev;
+                if (info) {
+                    setEnvCheckData({ systemInfo: info, toolStatus: updated });
+                }
+                return updated;
             });
             addLog(`>>> ${toolKey} 安装流程结束。`);
         } catch (e) {
@@ -825,8 +1005,14 @@ const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?
                             )}
 
                             <div className="grid grid-cols-2 gap-3 mt-auto">
-                                <div className="bg-white/5 p-2.5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors"><div className="text-[10px] text-gray-500 mb-1">内存</div><div className="text-sm font-bold font-mono text-teal-400">{info?.total_memory_gb} GB</div></div>
-                                <div className="bg-white/5 p-2.5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors"><div className="text-[10px] text-gray-500 mb-1">磁盘</div><div className="text-sm font-bold font-mono text-teal-400">{info?.total_disk_gb} GB</div></div>
+                                <div className="bg-white/5 p-2.5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors">
+                                    <div className="text-[10px] text-gray-500 mb-1">内存</div>
+                                    <div className="text-sm font-bold font-mono text-teal-400">{formatGb(info?.total_memory_gb)}</div>
+                                </div>
+                                <div className="bg-white/5 p-2.5 rounded-lg border border-white/5 hover:bg-white/10 transition-colors">
+                                    <div className="text-[10px] text-gray-500 mb-1">磁盘</div>
+                                    <div className="text-sm font-bold font-mono text-teal-400">{formatGb(info?.total_disk_gb)}</div>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -881,13 +1067,42 @@ const EnvironmentCheckStep: React.FC<{ onNext: (data: any) => void, initialData?
 };
 
 const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext }) => {
-    const { networkEnvironment, setIndexTtsRepoDir } = useWizard();
+    const { networkEnvironment, setIndexTtsRepoDir, indexTtsRepoDir } = useWizard();
     const [path, setPath] = useState("");
     const [logs, setLogs] = useState<string[]>([]);
     const [progressStep, setProgressStep] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const isChina = networkEnvironment === 'mainland_china';
     const modelSource = isChina ? "ModelScope (CN)" : "HuggingFace (Global)";
+
+    useEffect(() => {
+        if (!isTauriEnvironment) return;
+        let unlisten: UnlistenFn | null = null;
+        listen<CoreDeployLogPayload>('core-deploy-log', (event) => {
+            const payload = event.payload;
+            if (!payload?.line) return;
+            const prefix = payload.step ? `[${payload.step}] ` : '';
+            setLogs(l => [...l, `${prefix}${payload.line}`]);
+        })
+        .then((fn) => {
+            unlisten = fn;
+        })
+        .catch((err) => {
+            console.warn('Failed to subscribe core deploy logs', err);
+        });
+
+        return () => {
+            if (unlisten) {
+                unlisten();
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (indexTtsRepoDir && !path) {
+            setPath(indexTtsRepoDir);
+        }
+    }, [indexTtsRepoDir, path]);
 
     const startDeployment = async () => {
         setIsRunning(true);
@@ -958,7 +1173,21 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
                         <div className="text-[10px] font-bold text-gray-500 uppercase">安装路径</div>
                         <div className="flex gap-2">
                             <input type="text" value={path} onChange={e => setPath(e.target.value)} placeholder="选择目录..." className="flex-1 bg-white/5 rounded px-2 py-1.5 text-xs text-white border border-white/10 focus:border-purple-500 focus:outline-none transition-all focus:ring-1 focus:ring-purple-500" />
-                            <Button size="xs" variant="outline" onClick={() => tauriOpenDialog().then(selectedPath => { if (typeof selectedPath === 'string') { setPath(selectedPath); } } )} className="h-full px-2 hover:bg-white/10"><FolderOpen className="w-3 h-3" /></Button>
+                            <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={async () => {
+                                    const selectedPath = await tauriOpenDialog();
+                                    if (typeof selectedPath === 'string') {
+                                        setPath(selectedPath);
+                                    } else if (Array.isArray(selectedPath) && selectedPath.length > 0 && typeof selectedPath[0] === 'string') {
+                                        setPath(selectedPath[0]);
+                                    }
+                                }}
+                                className="h-full px-2 hover:bg-white/10"
+                            >
+                                <FolderOpen className="w-3 h-3" />
+                            </Button>
                         </div>
                         <div className="text-[10px] font-bold text-gray-500 uppercase mt-1">当前源</div>
                         <div className="flex items-center gap-2 text-xs text-gray-300 bg-white/5 p-2 rounded border border-white/5">
@@ -999,38 +1228,158 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
 };
 
 // 重新设计的 ServerControlStep (主控制台)
-const ServerControlStep: React.FC<{}> = () => {
-    const { envCheckData, indexTtsRepoDir } = useWizard(); // 获取系统检测数据和仓库目录
-    const hasNvidia = envCheckData?.systemInfo?.gpu_info?.name?.toUpperCase().includes('NVIDIA');
+const ServerControlStep: React.FC<{ onBackToDeploy: () => void }> = ({ onBackToDeploy }) => {
+    const { envCheckData, indexTtsRepoDir, setIndexTtsRepoDir } = useWizard(); // 获取系统检测数据和仓库目录
+    const gpuName = envCheckData?.systemInfo?.gpu_info?.name;
+    const hasNvidia = !!gpuName && gpuName.toUpperCase().includes('NVIDIA');
 
-    const [status, setStatus] = useState('Stopped');
+    const [status, setStatus] = useState<EngineStatus>('Stopped');
     const [logs, setLogs] = useState<string[]>([]);
     const [useGpu, setUseGpu] = useState(hasNvidia);
     const [useFp16, setUseFp16] = useState(hasNvidia);
     const [repoUpdate, setRepoUpdate] = useState<{ has_update: boolean, message?: string, checking: boolean, local_hash?: string }>({ has_update: false, checking: false });
     const [isPulling, setIsPulling] = useState(false);
     const [currentCmd, setCurrentCmd] = useState("");
+    const [repoValid, setRepoValid] = useState<boolean | null>(null);
+    const startDisabled = status === 'Stopped' && (!indexTtsRepoDir || repoValid === false);
+    const isStarting = status === 'Starting';
+    const isRunning = status === 'Running';
+    const actionDisabled = status === 'Running' ? false : status === 'Starting' ? true : startDisabled;
+    const statusText = isRunning ? "在线" : isStarting ? "准备中" : "离线";
+    const statusColor = isRunning ? "text-green-400" : isStarting ? "text-amber-400" : "text-gray-400";
+
+    const waitForWebUiReady = async () => {
+        const maxAttempts = 30;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                await fetch(WEBUI_URL, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: controller.signal });
+                clearTimeout(timeoutId);
+                return true;
+            } catch (err) {
+                // Ignore errors and retry
+            }
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        return false;
+    };
 
     useEffect(() => { 
+        if (!indexTtsRepoDir) {
+            setRepoUpdate({ has_update: false, checking: false, message: "未配置路径", local_hash: undefined });
+            setRepoValid(null);
+            return;
+        }
         const checkUpdate = async () => { 
             setRepoUpdate(p => ({ ...p, checking: true })); 
-            const res = await tauriInvoke('check_repo_update', { target_dir: indexTtsRepoDir }); 
-            setRepoUpdate({ has_update: res.has_update, message: res.message, checking: false, local_hash: res.local_hash }); 
+            try {
+                const res = await tauriInvoke('check_repo_update', { target_dir: indexTtsRepoDir }); 
+                setRepoUpdate({ has_update: res.has_update, message: res.message, checking: false, local_hash: res.local_hash }); 
+            } catch (err) {
+                setRepoUpdate({ has_update: false, checking: false, message: "检查失败", local_hash: undefined });
+                setLogs(l => [...l, `[ERROR] 仓库更新检查失败: ${err}`]);
+            }
         }; 
+        const validateRepo = async () => {
+            if (!isTauriEnvironment) {
+                setRepoValid(true);
+                return;
+            }
+            try {
+                const res = await tauriInvoke('check_index_tts_repo', { repo_dir: indexTtsRepoDir });
+                setRepoValid(!!res);
+                if (!res) {
+                    setLogs(l => [...l, "[WARN] 当前目录不是有效的 IndexTTS 仓库，请重新部署或切换路径。"]);
+                }
+            } catch (err) {
+                setRepoValid(false);
+                setLogs(l => [...l, `[ERROR] 无法验证仓库: ${err}`]);
+            }
+        };
         checkUpdate(); 
+        validateRepo();
     }, [indexTtsRepoDir]);
 
+    useEffect(() => {
+        if (!isTauriEnvironment) return;
+        tauriInvoke('get_server_status')
+            .then((res: string) => {
+                if (res === 'Running') {
+                    setStatus('Running');
+                } else if (res === 'Starting') {
+                    setStatus('Starting');
+                } else {
+                    setStatus('Stopped');
+                }
+            })
+            .catch((err) => {
+                console.warn('Failed to query server status', err);
+                setStatus('Stopped');
+            });
+    }, []);
+
+    useEffect(() => {
+        if (!isTauriEnvironment) return;
+        let unlistenStdout: UnlistenFn | null = null;
+        let unlistenStderr: UnlistenFn | null = null;
+
+        listen<ServerLogPayload>('server-log-stdout', (event) => {
+            setLogs(l => [...l, event.payload]);
+        }).then((fn) => (unlistenStdout = fn))
+          .catch((err) => console.warn('Failed to listen server stdout', err));
+
+        listen<ServerLogPayload>('server-log-stderr', (event) => {
+            setLogs(l => [...l, event.payload]);
+        }).then((fn) => (unlistenStderr = fn))
+          .catch((err) => console.warn('Failed to listen server stderr', err));
+
+        return () => {
+            unlistenStdout?.();
+            unlistenStderr?.();
+        };
+    }, []);
+
+    const ensureRepoPath = () => {
+        if (!indexTtsRepoDir) {
+            setLogs(l => [...l, "[ERROR] 未检测到部署目录，请先完成核心部署或手动选择路径。"]);
+            return false;
+        }
+        if (repoValid === false) {
+            setLogs(l => [...l, "[ERROR] 当前路径不是有效的 IndexTTS 仓库，请重新部署或切换路径。"]);
+            return false;
+        }
+        return true;
+    };
+
+    const handleSelectRepoPath = async () => {
+        if (!isTauriEnvironment) return;
+        const selected = await tauriOpenDialog();
+        const nextPath = Array.isArray(selected) ? selected[0] : selected;
+        if (typeof nextPath === 'string' && nextPath.trim().length > 0) {
+            setIndexTtsRepoDir(nextPath);
+            setLogs(l => [...l, `>>> 仓库路径已更新为: ${nextPath}`]);
+            setRepoUpdate({ has_update: false, checking: false, message: "路径已更新", local_hash: undefined });
+        }
+    };
+
     const handlePull = async () => { 
+        if (!ensureRepoPath()) return;
         setIsPulling(true);
         setLogs(l => [...l, ">>> 正在拉取最新代码 (Git Pull)..."]); 
-        const result = await tauriInvoke('pull_repo', { target_dir: indexTtsRepoDir }); 
-        if (result === "SUCCESS") {
-            setLogs(l => [...l, "✔ 代码已更新到最新版本。", ">>> 请重启服务以应用更改。"]); 
-            setRepoUpdate(p => ({ ...p, has_update: false, message: "已更新到最新" })); 
-        } else {
-            setLogs(l => [...l, `[ERROR] 更新失败: ${result}`]);
+        try {
+            const result = await tauriInvoke('pull_repo', { target_dir: indexTtsRepoDir }); 
+            if (result === "SUCCESS") {
+                setLogs(l => [...l, "✔ 代码已更新到最新版本。", ">>> 请重启服务以应用更改。"]); 
+                setRepoUpdate(p => ({ ...p, has_update: false, message: "已更新到最新" })); 
+            } else {
+                setLogs(l => [...l, `[ERROR] 更新失败: ${result}`]);
+            }
+        } catch (err) {
+            setLogs(l => [...l, `[ERROR] 更新失败: ${err}`]);
+        } finally {
+            setIsPulling(false);
         }
-        setIsPulling(false);
     };
     
     const handleClearLogs = () => {
@@ -1038,21 +1387,29 @@ const ServerControlStep: React.FC<{}> = () => {
     };
 
     const refreshRepo = async () => {
+         if (!ensureRepoPath()) return;
          setRepoUpdate(p => ({ ...p, checking: true }));
          setLogs(l => [...l, ">>> 检查仓库更新..."]);
-         // Simulate delay
          await new Promise(r => setTimeout(r, 800));
-         const res = await tauriInvoke('check_repo_update', { target_dir: indexTtsRepoDir });
-         setRepoUpdate({ has_update: res.has_update, message: res.message, checking: false, local_hash: res.local_hash });
-         setLogs(l => [...l, res.has_update ? "发现新版本！" : "当前已是最新版本。"]);
+         try {
+             const res = await tauriInvoke('check_repo_update', { target_dir: indexTtsRepoDir });
+             setRepoUpdate({ has_update: res.has_update, message: res.message, checking: false, local_hash: res.local_hash });
+             setLogs(l => [...l, res.has_update ? "发现新版本！" : "当前已是最新版本。"]);
+         } catch (err) {
+             setRepoUpdate(p => ({ ...p, checking: false }));
+             setLogs(l => [...l, `[ERROR] 检查失败: ${err}`]);
+         }
     };
 
     const toggle = async () => { 
+        if (status === 'Starting') return;
+        if (status === 'Stopped' && !ensureRepoPath()) {
+            return;
+        }
         if (status === 'Stopped') { 
-            // Construct running command arguments
             const args: { [key: string]: any } = {
                 target_dir: indexTtsRepoDir,
-                host: "0.0.0.0",
+                host: "127.0.0.1",
                 port: 7860,
                 device: useGpu ? "cuda" : "cpu"
             };
@@ -1060,26 +1417,52 @@ const ServerControlStep: React.FC<{}> = () => {
                 args.precision = "fp16";
             }
             
-            // Set running command string for display
-            const cmd = `python app.py --host ${args.host} --port ${args.port} --device ${args.device} ${args.precision ? `--precision ${args.precision}` : ''}`;
+            const cmdParts = [
+                "uv run webui.py",
+                `--host ${args.host}`,
+                `--port ${args.port}`,
+                useGpu ? "--cuda_kernel" : "",
+                args.precision ? `--fp16` : ''
+            ].filter(Boolean);
+            const cmd = cmdParts.join(' ');
             setCurrentCmd(cmd);
 
             setStatus('Starting'); 
-            setLogs(l => [...l, `>>> ${cmd}`]); 
-            setLogs(l => [...l, `>>> 正在初始化推理引擎...`]); 
-            const result = await tauriInvoke('start_index_tts_server', args); 
-            if (result === "Running") {
-                setStatus('Running'); 
-                setLogs(l => [...l, "[INFO] HTTP 服务器已在端口 7860 启动。", ">>> WebUI 已就绪: http://127.0.0.1:7860"]); 
-            } else {
+            setLogs(l => [...l, `>>> ${cmd}`, ">>> 正在初始化推理引擎..."]); 
+            try {
+                const result = await tauriInvoke('start_index_tts_server', args); 
+                if (result === "Starting" || result === "Running") {
+                    setLogs(l => [...l, ">>> 推理进程已启动，等待 WebUI 响应..."]);
+                    const ready = await waitForWebUiReady();
+                    if (ready) {
+                        setStatus('Running'); 
+                        setLogs(l => [...l, `[INFO] HTTP 服务器已在 ${WEBUI_URL} 启动。`, `>>> WebUI 已就绪: ${WEBUI_URL}`]); 
+                    } else {
+                        setLogs(l => [...l, "[ERROR] WebUI 在预期时间内未响应，请检查日志。"]);
+                        try {
+                            await tauriInvoke('stop_index_tts_server');
+                        } catch (err) {
+                            console.warn("Failed to stop server after timeout", err);
+                        }
+                        setStatus('Stopped');
+                    }
+                } else {
+                    setStatus('Stopped');
+                    setLogs(l => [...l, `[ERROR] 服务启动失败: ${result}`]);
+                }
+            } catch (err) {
                 setStatus('Stopped');
-                setLogs(l => [...l, `[ERROR] 服务启动失败: ${result}`]);
+                setLogs(l => [...l, `[ERROR] 服务启动失败: ${err}`, "请确认仓库中存在 webui.py 并已完成核心部署。"]);
             }
         } else { 
-            await tauriInvoke('stop_index_tts_server'); 
-            setStatus('Stopped'); 
-            setLogs(l => [...l, "[INFO] 收到停止信号...", "服务已安全关闭。"]); 
-            setCurrentCmd("");
+            try {
+                await tauriInvoke('stop_index_tts_server'); 
+                setStatus('Stopped'); 
+                setLogs(l => [...l, "[INFO] 收到停止信号...", "服务已安全关闭。"]); 
+                setCurrentCmd("");
+            } catch (err) {
+                setLogs(l => [...l, `[ERROR] 停止失败: ${err}`]);
+            }
         } 
     };
 
@@ -1093,10 +1476,10 @@ const ServerControlStep: React.FC<{}> = () => {
             <div className="flex gap-3 h-auto min-h-[110px] shrink-0 z-20 relative">
                 
                 {/* 左侧: 引擎状态与开关 (占 40%) */}
-                <MagicCard className="flex-[2] p-4 flex flex-col justify-between bg-gradient-to-br from-gray-900 to-black border-white/10 animate-[slideRight_0.5s_ease-out_0.1s_both] relative overflow-hidden" active={status === 'Running'} gradientColor={status === 'Running' ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)"}>
+                <MagicCard className="flex-[2] p-4 flex flex-col justify-between bg-gradient-to-br from-gray-900 to-black border-white/10 animate-[slideRight_0.5s_ease-out_0.1s_both] relative overflow-hidden" active={isRunning} gradientColor={isRunning ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)"}>
                     
                     {/* 运行时特效背景 - 量子流体 */}
-                    {status === 'Running' && (
+                    {isRunning && (
                         <div className="absolute inset-0 pointer-events-none opacity-30">
                             <div className="absolute w-[200%] h-[200%] bg-[radial-gradient(circle_at_50%_50%,rgba(16,185,129,0.1),transparent_50%)] animate-[spin_10s_linear_infinite] top-[-50%] left-[-50%]"></div>
                         </div>
@@ -1105,17 +1488,20 @@ const ServerControlStep: React.FC<{}> = () => {
                     <div className="flex justify-between items-start relative z-10">
                         <div>
                             <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">ENGINE STATUS</div>
-                            <div className={cn("text-2xl font-black tracking-tight transition-colors duration-500", status === 'Running' ? "text-green-400" : "text-gray-400")}>
-                                {status === 'Running' ? "ONLINE" : "OFFLINE"}
+                            <div className={cn("text-2xl font-black tracking-tight transition-colors duration-500", statusColor)}>
+                                {statusText}
                             </div>
+                            {isStarting && <div className="text-[10px] text-amber-300 mt-1">等待 WebUI 响应...</div>}
                         </div>
                         {/* 动态图表/呼吸灯 */}
-                        {status === 'Running' ? (
+                        {isRunning ? (
                             <div className="flex gap-1 items-end h-4">
                                 <div className="w-1 bg-green-500 h-2 animate-[bounce_1s_infinite]"></div>
                                 <div className="w-1 bg-green-500 h-3 animate-[bounce_1.2s_infinite]"></div>
                                 <div className="w-1 bg-green-500 h-4 animate-[bounce_0.8s_infinite]"></div>
                             </div>
+                        ) : isStarting ? (
+                            <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
                         ) : (
                             <div className="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_currentColor]"></div>
                         )}
@@ -1125,11 +1511,18 @@ const ServerControlStep: React.FC<{}> = () => {
                     <div className="relative z-10 mt-2">
                          <Button 
                             size="lg" 
-                            variant={status === 'Running' ? "consoleStop" : "consoleStart"} 
+                            variant={isRunning ? "consoleStop" : "consoleStart"} 
                             className="w-full h-10 text-sm font-bold tracking-wide transition-all hover:scale-[1.02] active:scale-[0.98]"
+                            disabled={actionDisabled}
                             onClick={toggle}
                         >
-                            {status === 'Running' ? <><StopCircle className="w-4 h-4 mr-2" /> 停止服务</> : <><Play className="w-4 h-4 mr-2 fill-current" /> 启动引擎</>}
+                            {isRunning ? (
+                                <><StopCircle className="w-4 h-4 mr-2" /> 停止服务</>
+                            ) : isStarting ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 启动中...</>
+                            ) : (
+                                <><Play className="w-4 h-4 mr-2 fill-current" /> 启动引擎</>
+                            )}
                         </Button>
                     </div>
                 </MagicCard>
@@ -1138,17 +1531,23 @@ const ServerControlStep: React.FC<{}> = () => {
                 <MagicCard className="flex-1 p-4 flex flex-col justify-between bg-white/5 animate-[fadeIn_0.5s_ease-out_0.2s_both]" gradientColor="rgba(59, 130, 246, 0.1)">
                     <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">ACCESS POINT</div>
                     <div className="flex-1 flex items-center justify-center my-2 relative">
-                        <div className={cn("p-3 rounded-xl transition-all duration-500 z-10", status === 'Running' ? "bg-blue-500/20 text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.3)] scale-110" : "bg-white/5 text-gray-600")}>
+                        <div className={cn("p-3 rounded-xl transition-all duration-500 z-10", 
+                            isRunning ? "bg-blue-500/20 text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.3)] scale-110" : 
+                            isStarting ? "bg-amber-500/20 text-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.3)] scale-105" : 
+                            "bg-white/5 text-gray-600"
+                        )}>
                             <Globe className="w-6 h-6" />
                         </div>
-                        {status === 'Running' && <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse"></div>}
+                        {isRunning && <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse"></div>}
+                        {isStarting && <div className="absolute inset-0 bg-amber-500/20 blur-xl rounded-full animate-pulse"></div>}
                     </div>
+                    {isStarting && <div className="text-[10px] text-amber-300 text-center mb-1">WebUI 启动中...</div>}
                     <Button 
                         size="xs" 
                         variant="outline" 
-                        disabled={status !== 'Running'} 
-                        onClick={() => tauriOpenUrl("http://localhost:7860")}
-                        className={cn("w-full border-dashed transition-all", status === 'Running' ? "border-blue-500/50 text-blue-300 hover:bg-blue-500/10" : "opacity-50")}
+                        disabled={!isRunning} 
+                        onClick={() => tauriOpenUrl(WEBUI_URL)}
+                        className={cn("w-full border-dashed transition-all", isRunning ? "border-blue-500/50 text-blue-300 hover:bg-blue-500/10" : "opacity-50")}
                     >
                         <ExternalLink className="w-3 h-3 mr-1" /> 打开 WebUI
                     </Button>
@@ -1188,17 +1587,32 @@ const ServerControlStep: React.FC<{}> = () => {
                  <MagicCard className="flex-1 p-3 flex flex-col justify-between bg-white/5 animate-[fadeIn_0.5s_ease-out_0.4s_both] relative overflow-hidden">
                     <div className="flex justify-between items-center">
                         <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">REPO</div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
+                            <button onClick={(e) => {e.stopPropagation(); handleSelectRepoPath();}} className="text-gray-500 hover:text-white transition-colors text-[10px] underline decoration-dotted">
+                                {indexTtsRepoDir ? "更改路径" : "选择路径"}
+                            </button>
                             {repoUpdate.checking && <Loader2 className="w-3 h-3 animate-spin text-gray-500" />}
                             <button onClick={(e) => {e.stopPropagation(); refreshRepo();}} className="text-gray-500 hover:text-white transition-colors"><RefreshCcw className="w-3 h-3" /></button>
                         </div>
                     </div>
                     
-                    <div className="flex-1 flex flex-col justify-center py-1">
-                        <div className="text-[10px] text-gray-400 font-mono truncate flex items-center gap-1">
+                    <div className="flex flex-col gap-1 py-1 min-h-[60px]">
+                        <div className="text-[10px] text-gray-500 uppercase">路径</div>
+                        <div className="text-[9px] text-gray-400 font-mono break-all bg-black/30 rounded p-1 border border-white/5">
+                            {indexTtsRepoDir || "未配置，请先部署或选择目录"}
+                        </div>
+                        <div className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
                             <GitBranch className="w-3 h-3" /> {repoUpdate.local_hash || "Unknown"}
                         </div>
-                        {repoUpdate.has_update ? <div className="text-[9px] text-orange-400 mt-0.5 animate-pulse font-bold">发现新版本</div> : <div className="text-[9px] text-green-500 mt-0.5">已是最新</div>}
+                        {repoUpdate.has_update ? <div className="text-[9px] text-orange-400 mt-0.5 animate-pulse font-bold">发现新版本</div> : <div className="text-[9px] text-green-500 mt-0.5">{repoUpdate.message || "已是最新"}</div>}
+                {repoValid === false && (
+                    <div className="text-[9px] text-red-400 flex flex-col gap-1">
+                        <span>当前目录不是 IndexTTS 仓库，请重新选择或重新部署。</span>
+                        <div className="flex flex-col gap-1">
+                            <Button size="xs" variant="warning" className="w-full" onClick={onBackToDeploy}>返回核心部署</Button>
+                        </div>
+                    </div>
+                )}
                     </div>
 
                     {repoUpdate.has_update ? (
@@ -1243,10 +1657,16 @@ const ServerControlStep: React.FC<{}> = () => {
 
 const App: React.FC = () => {
     const [showSplash, setShowSplash] = useState(true);
-    const [step, setStep] = useState(0);
-    const next = () => setStep(s => s + 1);
+    const [step, setStep] = useState(() => (loadWizardState().indexTtsRepoDir ? 3 : 0));
+    const next = () => setStep(s => Math.min(s + 1, 3));
     const back = () => setStep(s => Math.max(0, s - 1));
-    const steps = [ <NetworkSelectStep onNext={next} />, <EnvironmentCheckStep onNext={next} />, <CoreDeploymentStep onNext={next} />, <ServerControlStep /> ];
+    const goToStep = (idx: number) => setStep(() => Math.max(0, Math.min(idx, 3)));
+    const steps = [
+        <NetworkSelectStep onNext={next} />,
+        <EnvironmentCheckStep onNext={next} />,
+        <CoreDeploymentStep onNext={next} />,
+        <ServerControlStep onBackToDeploy={() => goToStep(2)} />
+    ];
     const isServerControl = step === 3;
 
     return (
