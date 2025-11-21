@@ -1114,7 +1114,10 @@ const CoreDeploymentStep: React.FC<{ onNext: (data: any) => void }> = ({ onNext 
                 return `git -C "${path}" lfs install && git -C "${path}" lfs pull`;
             case 'setup_index_tts_env': {
                 const mirror = isChina ? ' --default-index https://pypi.tuna.tsinghua.edu.cn/simple' : '';
-                return `uv sync${mirror}`.trim();
+                const pipMirror = isChina ? ' --index-url https://pypi.tuna.tsinghua.edu.cn/simple' : '';
+                const syncCmd = `uv sync${mirror}`.trim();
+                const installCmd = `uv pip install${pipMirror} gradio`.trim();
+                return `${syncCmd} && ${installCmd}`;
             }
             case 'download_index_tts_model': {
                 if (isChina) {

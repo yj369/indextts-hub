@@ -316,16 +316,33 @@ pub async fn setup_index_tts_env(
     target_dir: String,
     network_environment: String,
 ) -> Result<String, String> {
+    let use_china_mirror = network_environment == "mainland_china";
+
     let mut command = new_command("uv");
     command.arg("sync").current_dir(&target_dir);
 
-    if network_environment == "mainland_china" {
+    if use_china_mirror {
         command
             .arg("--default-index")
             .arg("https://pypi.tuna.tsinghua.edu.cn/simple");
     }
 
     run_command_with_streaming(&app_handle, "setup_env", command).await?;
+
+    let mut install_gradio_cmd = new_command("uv");
+    install_gradio_cmd
+        .arg("pip")
+        .arg("install")
+        .arg("gradio")
+        .current_dir(&target_dir);
+
+    if use_china_mirror {
+        install_gradio_cmd
+            .arg("--index-url")
+            .arg("https://pypi.tuna.tsinghua.edu.cn/simple");
+    }
+
+    run_command_with_streaming(&app_handle, "install_gradio", install_gradio_cmd).await?;
     Ok("SUCCESS".to_string())
 }
 
