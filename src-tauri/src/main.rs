@@ -11,7 +11,6 @@ use crate::commands::tool_check;
 use std::env;
 use std::path::PathBuf;
 
-
 /// Ensure the packaged app sees common locations (Homebrew, /usr/local/bin, etc.)
 /// even when it is launched outside of a login shell.
 fn extend_system_path_with_defaults() {
@@ -111,7 +110,6 @@ fn fallback_path_entries() -> Vec<PathBuf> {
     dirs
 }
 
-
 fn main() {
     extend_system_path_with_defaults();
 
@@ -136,7 +134,7 @@ fn main() {
             server::stop_index_tts_server,
             server::get_server_status,
             server::check_repo_update, // New command
-            server::pull_repo // New command
+            server::pull_repo          // New command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

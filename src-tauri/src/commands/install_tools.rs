@@ -1,7 +1,7 @@
 // src-tauri/src/commands/install_tools.rs
 
-use tokio::process::Command;
 use std::env;
+use tokio::process::Command;
 
 #[tauri::command]
 pub async fn install_git_and_lfs() -> Result<String, String> {
@@ -82,13 +82,16 @@ pub async fn install_uv() -> Result<String, String> {
                     .map_err(|e| format!("Failed to execute winget for uv: {}", e))?;
 
                 if !uv_install_cmd.status.success() {
-                    return Err(format!("Winget uv installation failed: {}", String::from_utf8_lossy(&uv_install_cmd.stderr)));
+                    return Err(format!(
+                        "Winget uv installation failed: {}",
+                        String::from_utf8_lossy(&uv_install_cmd.stderr)
+                    ));
                 }
                 Ok("SUCCESS".to_string())
             } else {
                 Err("Winget not found. Please install uv manually from https://docs.astral.sh/uv/install".to_string())
             }
-        },
+        }
         "macos" => {
             let brew_installed = Command::new("brew")
                 .arg("--version")
@@ -104,7 +107,10 @@ pub async fn install_uv() -> Result<String, String> {
                     .map_err(|e| format!("Failed to execute brew for uv: {}", e))?;
 
                 if !uv_install_cmd.status.success() {
-                    return Err(format!("Homebrew uv installation failed: {}", String::from_utf8_lossy(&uv_install_cmd.stderr)));
+                    return Err(format!(
+                        "Homebrew uv installation failed: {}",
+                        String::from_utf8_lossy(&uv_install_cmd.stderr)
+                    ));
                 }
                 Ok("SUCCESS".to_string())
             } else {
@@ -117,15 +123,20 @@ pub async fn install_uv() -> Result<String, String> {
                     .map_err(|e| format!("Failed to execute curl script for uv: {}", e))?;
 
                 if !curl_install_cmd.status.success() {
-                    return Err(format!("Curl script uv installation failed: {}", String::from_utf8_lossy(&curl_install_cmd.stderr)));
+                    return Err(format!(
+                        "Curl script uv installation failed: {}",
+                        String::from_utf8_lossy(&curl_install_cmd.stderr)
+                    ));
                 }
                 Ok("SUCCESS".to_string())
             }
-        },
-        _ => Err(format!("Automatic uv installation is not supported on {} yet. Please install manually.", os)),
+        }
+        _ => Err(format!(
+            "Automatic uv installation is not supported on {} yet. Please install manually.",
+            os
+        )),
     }
 }
-
 
 #[tauri::command]
 pub async fn install_python() -> Result<String, String> {
@@ -147,13 +158,16 @@ pub async fn install_python() -> Result<String, String> {
                     .map_err(|e| format!("Failed to execute winget for Python: {}", e))?;
 
                 if !python_install_cmd.status.success() {
-                    return Err(format!("Winget Python installation failed: {}", String::from_utf8_lossy(&python_install_cmd.stderr)));
+                    return Err(format!(
+                        "Winget Python installation failed: {}",
+                        String::from_utf8_lossy(&python_install_cmd.stderr)
+                    ));
                 }
                 Ok("SUCCESS".to_string())
             } else {
                 Err("Winget not found. Please install Python manually from https://www.python.org/downloads/windows/".to_string())
             }
-        },
+        }
         "macos" => {
             let brew_installed = Command::new("brew")
                 .arg("--version")
@@ -169,13 +183,19 @@ pub async fn install_python() -> Result<String, String> {
                     .map_err(|e| format!("Failed to execute brew for Python: {}", e))?;
 
                 if !python_install_cmd.status.success() {
-                    return Err(format!("Homebrew Python installation failed: {}", String::from_utf8_lossy(&python_install_cmd.stderr)));
+                    return Err(format!(
+                        "Homebrew Python installation failed: {}",
+                        String::from_utf8_lossy(&python_install_cmd.stderr)
+                    ));
                 }
                 Ok("SUCCESS".to_string())
             } else {
                 Err("Homebrew not found. Please install Python manually from https://www.python.org/downloads/mac-osx/".to_string())
             }
-        },
-        _ => Err(format!("Automatic Python installation is not supported on {} yet. Please install manually.", os)),
+        }
+        _ => Err(format!(
+            "Automatic Python installation is not supported on {} yet. Please install manually.",
+            os
+        )),
     }
 }

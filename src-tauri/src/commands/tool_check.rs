@@ -1,6 +1,6 @@
 // src-tauri/src/commands/tool_check.rs
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -14,10 +14,7 @@ pub struct ToolStatus {
 
 /// Checks if a command exists and runs successfully with a --version flag.
 async fn check_command(cmd_name: &str, version_arg: &str) -> bool {
-    let output = Command::new(cmd_name)
-        .arg(version_arg)
-        .output()
-        .await;
+    let output = Command::new(cmd_name).arg(version_arg).output().await;
 
     match output {
         Ok(output) => output.status.success(),
@@ -32,11 +29,11 @@ pub async fn check_tools() -> Result<ToolStatus, String> {
     let uv_installed = check_command("uv", "--version").await;
 
     // Check for Python
-    let python_installed = check_command("python", "--version").await || check_command("python3", "--version").await;
+    let python_installed =
+        check_command("python", "--version").await || check_command("python3", "--version").await;
 
     // Check for CUDA Toolkit (nvcc)
     let cuda_toolkit_installed = check_command("nvcc", "--version").await;
-
 
     Ok(ToolStatus {
         git_installed,

@@ -1,14 +1,14 @@
 // src-tauri/src/commands/server.rs
 
-use serde::{Serialize, Deserialize};
-use tokio::process::{Command as TokioCommand, Child};
-use std::sync::{Mutex, MutexGuard};
-use tauri::{State, AppHandle, Emitter};
-use tokio::io::{BufReader, AsyncBufReadExt};
-use tokio::time::sleep;
-use std::net::{TcpStream, SocketAddrV4, Ipv4Addr};
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, State};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command as TokioCommand};
+use tokio::time::sleep;
 
 // Define a struct to hold the child process, to be managed by Tauri State
 pub struct ServerChildProcess(Mutex<Option<Child>>);
@@ -58,13 +58,16 @@ pub async fn start_index_tts_server(
     }
 
     let mut command = TokioCommand::new("uv");
-    command.arg("run")
-           .arg("webui.py")
-           .arg("--host").arg(&host)
-           .arg("--port").arg(port.to_string())
-           .current_dir(&target_dir)
-           .stdout(std::process::Stdio::piped())
-           .stderr(std::process::Stdio::piped());
+    command
+        .arg("run")
+        .arg("webui.py")
+        .arg("--host")
+        .arg(&host)
+        .arg("--port")
+        .arg(port.to_string())
+        .current_dir(&target_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     if let Some(p) = precision {
         if p == "fp16" {
@@ -80,10 +83,18 @@ pub async fn start_index_tts_server(
     // For now, let's assume it's handled by setup_index_tts_env or download_index_tts_model if required.
     // If a direct HF_ENDPOINT is needed here, it should be passed from the frontend.
 
-    let mut child = command.spawn().map_err(|e| format!("Failed to start server: {}", e))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to start server: {}", e))?;
 
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout".to_string())?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Failed to capture stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Failed to capture stderr".to_string())?;
 
     tokio::spawn({
         let app_handle = app_handle.clone();
@@ -109,7 +120,9 @@ pub async fn start_index_tts_server(
 }
 
 #[tauri::command]
-pub async fn stop_index_tts_server(state: State<'_, ServerChildProcess>) -> Result<ServerStatus, String> {
+pub async fn stop_index_tts_server(
+    state: State<'_, ServerChildProcess>,
+) -> Result<ServerStatus, String> {
     let child = {
         let mut guard = state.lock();
         guard.take()
@@ -130,17 +143,20 @@ pub async fn stop_index_tts_server(state: State<'_, ServerChildProcess>) -> Resu
 }
 
 #[tauri::command]
-pub async fn get_server_status(state: State<'_, ServerChildProcess>) -> Result<ServerStatus, String> {
+pub async fn get_server_status(
+    state: State<'_, ServerChildProcess>,
+) -> Result<ServerStatus, String> {
     let mut guard = state.lock();
     if let Some(child) = guard.as_mut() {
-        match child.try_wait().map_err(|e| format!("Error checking child status: {}", e))? {
+        match child
+            .try_wait()
+            .map_err(|e| format!("Error checking child status: {}", e))?
+        {
             Some(_status) => {
                 *guard = None;
                 Ok(ServerStatus::Stopped)
             }
-            None => {
-                Ok(ServerStatus::Running)
-            }
+            None => Ok(ServerStatus::Running),
         }
     } else {
         Ok(ServerStatus::Stopped)
@@ -172,7 +188,10 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
         .map_err(|e| format!("Failed to execute git fetch: {}", e))?;
 
     if !fetch_output.status.success() {
-        return Err(format!("Git fetch failed: {}", String::from_utf8_lossy(&fetch_output.stderr)));
+        return Err(format!(
+            "Git fetch failed: {}",
+            String::from_utf8_lossy(&fetch_output.stderr)
+        ));
     }
 
     // Get local HEAD commit hash
@@ -185,9 +204,14 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
         .map_err(|e| format!("Failed to get local hash: {}", e))?;
 
     if !local_hash_output.status.success() {
-        return Err(format!("Failed to get local hash: {}", String::from_utf8_lossy(&local_hash_output.stderr)));
+        return Err(format!(
+            "Failed to get local hash: {}",
+            String::from_utf8_lossy(&local_hash_output.stderr)
+        ));
     }
-    let local_hash = String::from_utf8_lossy(&local_hash_output.stdout).trim().to_string();
+    let local_hash = String::from_utf8_lossy(&local_hash_output.stdout)
+        .trim()
+        .to_string();
 
     // Get remote HEAD commit hash for the current branch
     let remote_hash_output = TokioCommand::new("git")
@@ -199,9 +223,14 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
         .map_err(|e| format!("Failed to get remote hash: {}", e))?;
 
     if !remote_hash_output.status.success() {
-        return Err(format!("Failed to get remote hash: {}", String::from_utf8_lossy(&remote_hash_output.stderr)));
+        return Err(format!(
+            "Failed to get remote hash: {}",
+            String::from_utf8_lossy(&remote_hash_output.stderr)
+        ));
     }
-    let remote_hash = String::from_utf8_lossy(&remote_hash_output.stdout).trim().to_string();
+    let remote_hash = String::from_utf8_lossy(&remote_hash_output.stdout)
+        .trim()
+        .to_string();
 
     let has_update = local_hash != remote_hash;
     let message = if has_update {
@@ -234,12 +263,14 @@ pub async fn pull_repo(target_dir: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to execute git pull: {}", e))?;
 
     if !pull_output.status.success() {
-        return Err(format!("Git pull failed: {}", String::from_utf8_lossy(&pull_output.stderr)));
+        return Err(format!(
+            "Git pull failed: {}",
+            String::from_utf8_lossy(&pull_output.stderr)
+        ));
     }
 
     Ok("SUCCESS".to_string())
 }
-
 
 fn port_is_reachable(port: u16) -> bool {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
@@ -274,14 +305,23 @@ async fn force_kill_port(port: u16) -> Result<(), String> {
         .args(["-ti", &port_spec])
         .output()
         .await
-        .map_err(|e| format!("Failed to inspect active connections on port {}: {}", port, e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to inspect active connections on port {}: {}",
+                port, e
+            )
+        })?;
 
     if output.stdout.is_empty() {
         return Ok(());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for pid in stdout.lines().map(|line| line.trim()).filter(|line| !line.is_empty()) {
+    for pid in stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+    {
         let kill_output = TokioCommand::new("kill")
             .args(["-9", pid])
             .output()
@@ -312,11 +352,20 @@ async fn force_kill_port(port: u16) -> Result<(), String> {
         .args(["-NoProfile", "-Command", &script])
         .output()
         .await
-        .map_err(|e| format!("Failed to inspect active connections on port {}: {}", port, e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to inspect active connections on port {}: {}",
+                port, e
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut killed_any = false;
-    for pid in stdout.lines().map(|line| line.trim()).filter(|line| !line.is_empty()) {
+    for pid in stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+    {
         killed_any = true;
         let kill_output = TokioCommand::new("taskkill")
             .args(["/PID", pid, "/F"])

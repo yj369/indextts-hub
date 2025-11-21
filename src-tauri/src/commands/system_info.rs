@@ -1,7 +1,7 @@
 // src-tauri/src/commands/system_info.rs
 
+use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, System};
-use serde::{Serialize, Deserialize};
 use tokio::process::Command;
 
 // Re-using GpuInfo from index_tts.rs to avoid duplication
@@ -77,7 +77,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
                     // Extract VRAM in MiB, convert to GB
                     let vram_mib_str = parts[1].replace(" MiB", "");
                     let vram_gb = vram_mib_str.parse::<f64>().ok().map(|mib| mib / 1024.0);
-                    
+
                     let has_cuda = true; // If nvidia-smi works, assume CUDA is available
                     let recommended_fp16 = vram_gb.map_or(false, |vram| vram > 8.0);
 
@@ -91,7 +91,6 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
             }
         }
     }
-
 
     Ok(SystemInfo {
         os,

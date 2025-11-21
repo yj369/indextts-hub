@@ -1,13 +1,13 @@
 // src-tauri/src/commands/index_tts.rs
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 const CORE_DEPLOY_EVENT: &str = "core-deploy-log";
@@ -60,29 +60,17 @@ async fn run_command_with_streaming(
     let stderr_accumulator: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     if let Some(stdout) = child.stdout.take() {
-        let handle = app_handle.clone();
-        let step_name = step.to_string();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                emit_core_deploy_log(&handle, &step_name, "stdout", &line);
-            }
-        });
+        spawn_stream_reader(stdout, app_handle.clone(), step.to_string(), "stdout", None);
     }
 
     if let Some(stderr) = child.stderr.take() {
-        let handle = app_handle.clone();
-        let step_name = step.to_string();
-        let buffer = stderr_accumulator.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                if let Ok(mut guard) = buffer.lock() {
-                    guard.push(line.clone());
-                }
-                emit_core_deploy_log(&handle, &step_name, "stderr", &line);
-            }
-        });
+        spawn_stream_reader(
+            stderr,
+            app_handle.clone(),
+            step.to_string(),
+            "stderr",
+            Some(stderr_accumulator.clone()),
+        );
     }
 
     let status = child
@@ -101,6 +89,72 @@ async fn run_command_with_streaming(
     Ok(())
 }
 
+fn spawn_stream_reader<R>(
+    stream: R,
+    app_handle: AppHandle,
+    step_name: String,
+    stream_name: &'static str,
+    buffer: Option<Arc<Mutex<Vec<String>>>>,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stream);
+        let mut chunk = vec![0u8; 4096];
+        let mut carry = String::new();
+
+        loop {
+            match reader.read(&mut chunk).await {
+                Ok(0) => {
+                    if !carry.is_empty() {
+                        forward_line(
+                            &app_handle,
+                            &step_name,
+                            stream_name,
+                            &carry,
+                            buffer.as_ref(),
+                        );
+                        carry.clear();
+                    }
+                    break;
+                }
+                Ok(n) => {
+                    let mut text = String::from_utf8_lossy(&chunk[..n]).to_string();
+                    if text.contains('\r') {
+                        text = text.replace("\r\n", "\n");
+                        text = text.replace('\r', "\n");
+                    }
+                    carry.push_str(&text);
+
+                    while let Some(pos) = carry.find('\n') {
+                        let line = carry[..pos].to_string();
+                        carry.drain(..=pos);
+                        forward_line(&app_handle, &step_name, stream_name, &line, buffer.as_ref());
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+fn forward_line(
+    app_handle: &AppHandle,
+    step_name: &str,
+    stream_name: &str,
+    line: &str,
+    buffer: Option<&Arc<Mutex<Vec<String>>>>,
+) {
+    if let Some(buf) = buffer {
+        if let Ok(mut guard) = buf.lock() {
+            guard.push(line.to_string());
+        }
+    }
+    if !line.is_empty() {
+        emit_core_deploy_log(app_handle, step_name, stream_name, line);
+    }
+}
+
 async fn repair_existing_repo(app_handle: &AppHandle, target_dir: &str) -> Result<(), String> {
     let mut reset_cmd = Command::new("git");
     reset_cmd
@@ -110,17 +164,17 @@ async fn repair_existing_repo(app_handle: &AppHandle, target_dir: &str) -> Resul
     run_command_with_streaming(app_handle, "repair_repo_reset", reset_cmd).await?;
 
     let mut clean_cmd = Command::new("git");
-    clean_cmd
-        .arg("-C")
-        .arg(target_dir)
-        .args(["clean", "-fdx"]);
+    clean_cmd.arg("-C").arg(target_dir).args(["clean", "-fdx"]);
     run_command_with_streaming(app_handle, "repair_repo_clean", clean_cmd).await?;
 
     Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn clone_index_tts_repo(app_handle: AppHandle, target_dir: String) -> Result<String, String> {
+pub async fn clone_index_tts_repo(
+    app_handle: AppHandle,
+    target_dir: String,
+) -> Result<String, String> {
     let repo_url = "https://github.com/index-tts/index-tts.git";
     let target_path = Path::new(&target_dir);
 
@@ -138,7 +192,12 @@ pub async fn clone_index_tts_repo(app_handle: AppHandle, target_dir: String) -> 
 
         if is_git_repo.status.success() {
             if repo_has_core_files(target_path) {
-                emit_core_deploy_log(&app_handle, "clone_repo", "stdout", "目标目录已存在，跳过克隆。");
+                emit_core_deploy_log(
+                    &app_handle,
+                    "clone_repo",
+                    "stdout",
+                    "目标目录已存在，跳过克隆。",
+                );
                 return Ok("SUCCESS".to_string());
             }
 
@@ -219,15 +278,11 @@ pub async fn init_git_lfs(app_handle: AppHandle, target_dir: String) -> Result<S
     run_command_with_streaming(&app_handle, "init_lfs", install_cmd).await?;
 
     let mut pull_cmd = Command::new("git");
-    pull_cmd
-        .arg("-C")
-        .arg(&target_dir)
-        .args(["lfs", "pull"]);
+    pull_cmd.arg("-C").arg(&target_dir).args(["lfs", "pull"]);
     run_command_with_streaming(&app_handle, "init_lfs", pull_cmd).await?;
 
     Ok("SUCCESS".to_string())
 }
-
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn check_index_tts_repo(repo_dir: Option<String>) -> Result<bool, String> {
@@ -253,13 +308,14 @@ pub fn check_index_tts_repo(repo_dir: Option<String>) -> Result<bool, String> {
     Ok(true)
 }
 
-
 #[tauri::command(rename_all = "snake_case")]
-pub async fn setup_index_tts_env(app_handle: AppHandle, target_dir: String, network_environment: String) -> Result<String, String> {
+pub async fn setup_index_tts_env(
+    app_handle: AppHandle,
+    target_dir: String,
+    network_environment: String,
+) -> Result<String, String> {
     let mut command = Command::new("uv");
-    command
-        .arg("sync")
-        .current_dir(&target_dir);
+    command.arg("sync").current_dir(&target_dir);
 
     if network_environment == "mainland_china" {
         command
@@ -272,22 +328,34 @@ pub async fn setup_index_tts_env(app_handle: AppHandle, target_dir: String, netw
 }
 
 #[tauri::command]
-pub async fn install_hf_or_modelscope_tools(repo_dir: String, tool_name: String) -> Result<String, String> {
+pub async fn install_hf_or_modelscope_tools(
+    repo_dir: String,
+    tool_name: String,
+) -> Result<String, String> {
     let mut command = Command::new("uv");
-    command.arg("tool")
-           .arg("install")
-           .arg(&tool_name)
-           .current_dir(&repo_dir); // Ensure uv tools are installed within the repo's virtual environment
+    command
+        .arg("tool")
+        .arg("install")
+        .arg(&tool_name)
+        .current_dir(&repo_dir); // Ensure uv tools are installed within the repo's virtual environment
 
-    let output = command.output()
-                      .await
-                      .map_err(|e| format!("Failed to execute uv tool install for {}: {}", tool_name, e))?;
+    let output = command
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute uv tool install for {}: {}", tool_name, e))?;
 
     if !output.status.success() {
-        return Err(format!("uv tool install for {} failed: {}", tool_name, String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "uv tool install for {} failed: {}",
+            tool_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    Ok(format!("{} installed successfully using uv tool.", tool_name))
+    Ok(format!(
+        "{} installed successfully using uv tool.",
+        tool_name
+    ))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -323,11 +391,17 @@ pub async fn download_index_tts_model(
             if use_hf_mirror {
                 command.env("HF_ENDPOINT", "https://hf-mirror.com");
             }
-        },
+        }
         ModelSource::ModelScope => {
-            command.args(["run", "modelscope", "download", "--model", "IndexTeam/IndexTTS-2"]);
+            command.args([
+                "run",
+                "modelscope",
+                "download",
+                "--model",
+                "IndexTeam/IndexTTS-2",
+            ]);
             command.arg("--local_dir").arg(&local_dir);
-        },
+        }
     }
 
     run_command_with_streaming(&app_handle, "download_model", command).await?;
@@ -360,18 +434,21 @@ pub async fn run_gpu_check(repo_dir: String) -> Result<GpuInfo, String> {
 
     // Example parsing (you might need to adjust based on actual script output)
     let has_cuda = stdout.contains("torch.cuda.is_available(): True");
-    let name = stdout.lines()
-                     .find(|line| line.contains("GPU:"))
-                     .and_then(|line| line.split(':').nth(1))
-                     .map(|s| s.trim().to_string());
+    let name = stdout
+        .lines()
+        .find(|line| line.contains("GPU:"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|s| s.trim().to_string());
 
-    let vram_gb = stdout.lines()
-                        .find(|line| line.contains("VRAM:"))
-                        .and_then(|line| {
-                            line.split(':').nth(1)
-                                .and_then(|s| s.trim().split_whitespace().next())
-                                .and_then(|s| s.parse::<f64>().ok())
-                        });
+    let vram_gb = stdout
+        .lines()
+        .find(|line| line.contains("VRAM:"))
+        .and_then(|line| {
+            line.split(':')
+                .nth(1)
+                .and_then(|s| s.trim().split_whitespace().next())
+                .and_then(|s| s.parse::<f64>().ok())
+        });
 
     // Simple recommendation for FP16: if VRAM is detected and > 8GB
     let recommended_fp16 = vram_gb.map_or(false, |vram| vram > 8.0);
