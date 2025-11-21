@@ -26,17 +26,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Node + npm
+      # 1) 先装 Node（这里不再用 cache: 'pnpm'，避免需要提前有 pnpm）
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'          # 使用 npm 缓存
+          cache: 'npm'          # 想要缓存就用 npm 的缓存，简单省心
 
+      # 2) 用 npm 全局安装 pnpm
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      # 3) 安装依赖（等价于原来的 run_install: true）
       - name: Install dependencies
-        run: npm install        # 安装前端依赖（包含 @tauri-apps/cli 等）
+        run: pnpm install
 
-      # Rust toolchain（默认安装当前平台的 stable）
+      # Rust toolchain（默认安装当前平台的 stable 即可）
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
@@ -47,7 +52,7 @@ jobs:
 
       # 如果你没有在 tauri.conf.json 里配置 beforeBuildCommand，可以在这手动 build 前端
       # - name: Build frontend
-      #   run: npm run build
+      #   run: pnpm build
 
       - name: Build & Release with Tauri
         uses: tauri-apps/tauri-action@v0
@@ -60,4 +65,3 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-          tauriScript: 'npm run tauri'      # 强制使用 npm，而不是自动检测 pnpm / yarn
