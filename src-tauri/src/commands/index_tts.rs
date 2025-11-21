@@ -1,5 +1,6 @@
 // src-tauri/src/commands/index_tts.rs
 
+use super::command_utils::{configure_command, new_command};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -50,6 +51,7 @@ async fn run_command_with_streaming(
     step: &str,
     mut command: Command,
 ) -> Result<(), String> {
+    configure_command(&mut command);
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
@@ -156,14 +158,14 @@ fn forward_line(
 }
 
 async fn repair_existing_repo(app_handle: &AppHandle, target_dir: &str) -> Result<(), String> {
-    let mut reset_cmd = Command::new("git");
+    let mut reset_cmd = new_command("git");
     reset_cmd
         .arg("-C")
         .arg(target_dir)
         .args(["reset", "--hard", "HEAD"]);
     run_command_with_streaming(app_handle, "repair_repo_reset", reset_cmd).await?;
 
-    let mut clean_cmd = Command::new("git");
+    let mut clean_cmd = new_command("git");
     clean_cmd.arg("-C").arg(target_dir).args(["clean", "-fdx"]);
     run_command_with_streaming(app_handle, "repair_repo_clean", clean_cmd).await?;
 
@@ -181,7 +183,7 @@ pub async fn clone_index_tts_repo(
     // Check if the directory already exists
     if target_path.exists() && target_path.is_dir() {
         // If it exists, check if it's a git repository
-        let is_git_repo = Command::new("git")
+        let is_git_repo = new_command("git")
             .arg("-C")
             .arg(&target_dir)
             .arg("rev-parse")
@@ -262,7 +264,7 @@ pub async fn clone_index_tts_repo(
         }
     }
 
-    let mut command = Command::new("git");
+    let mut command = new_command("git");
     command.args(["clone", repo_url, &target_dir]);
     run_command_with_streaming(&app_handle, "clone_repo", command).await?;
     Ok("SUCCESS".to_string())
@@ -270,14 +272,14 @@ pub async fn clone_index_tts_repo(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn init_git_lfs(app_handle: AppHandle, target_dir: String) -> Result<String, String> {
-    let mut install_cmd = Command::new("git");
+    let mut install_cmd = new_command("git");
     install_cmd
         .arg("-C")
         .arg(&target_dir)
         .args(["lfs", "install"]);
     run_command_with_streaming(&app_handle, "init_lfs", install_cmd).await?;
 
-    let mut pull_cmd = Command::new("git");
+    let mut pull_cmd = new_command("git");
     pull_cmd.arg("-C").arg(&target_dir).args(["lfs", "pull"]);
     run_command_with_streaming(&app_handle, "init_lfs", pull_cmd).await?;
 
@@ -314,7 +316,7 @@ pub async fn setup_index_tts_env(
     target_dir: String,
     network_environment: String,
 ) -> Result<String, String> {
-    let mut command = Command::new("uv");
+    let mut command = new_command("uv");
     command.arg("sync").current_dir(&target_dir);
 
     if network_environment == "mainland_china" {
@@ -332,7 +334,7 @@ pub async fn install_hf_or_modelscope_tools(
     repo_dir: String,
     tool_name: String,
 ) -> Result<String, String> {
-    let mut command = Command::new("uv");
+    let mut command = new_command("uv");
     command
         .arg("tool")
         .arg("install")
@@ -380,7 +382,7 @@ pub async fn download_index_tts_model(
     let use_hf_mirror = network_environment == "mainland_china";
     let local_dir = model_save_path.unwrap_or_else(|| "checkpoints".to_string());
 
-    let mut command = Command::new("uv");
+    let mut command = new_command("uv");
     command.current_dir(&target_dir);
 
     match model_source {
@@ -418,7 +420,7 @@ pub struct GpuInfo {
 
 #[tauri::command]
 pub async fn run_gpu_check(repo_dir: String) -> Result<GpuInfo, String> {
-    let output = Command::new("uv")
+    let output = new_command("uv")
         .args(["run", "tools/gpu_check.py"])
         .current_dir(&repo_dir)
         .output()

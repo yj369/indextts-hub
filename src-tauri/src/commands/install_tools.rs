@@ -1,7 +1,7 @@
 // src-tauri/src/commands/install_tools.rs
 
+use super::command_utils::new_command;
 use std::env;
-use tokio::process::Command;
 
 #[tauri::command]
 pub async fn install_git_and_lfs() -> Result<String, String> {
@@ -10,14 +10,14 @@ pub async fn install_git_and_lfs() -> Result<String, String> {
     match os {
         "windows" => {
             // Check for winget
-            let winget_installed = Command::new("winget")
+            let winget_installed = new_command("winget")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if winget_installed {
-                let git_install_cmd = Command::new("winget")
+                let git_install_cmd = new_command("winget")
                     .args(["install", "--id", "Git.Git", "-e", "--source", "winget"])
                     .output()
                     .await
@@ -37,14 +37,14 @@ pub async fn install_git_and_lfs() -> Result<String, String> {
         },
         "macos" => {
             // Check for Homebrew
-            let brew_installed = Command::new("brew")
+            let brew_installed = new_command("brew")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if brew_installed {
-                let git_install_cmd = Command::new("brew")
+                let git_install_cmd = new_command("brew")
                     .args(["install", "git", "git-lfs"])
                     .output()
                     .await
@@ -68,14 +68,14 @@ pub async fn install_uv() -> Result<String, String> {
 
     match os {
         "windows" => {
-            let winget_installed = Command::new("winget")
+            let winget_installed = new_command("winget")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if winget_installed {
-                let uv_install_cmd = Command::new("winget")
+                let uv_install_cmd = new_command("winget")
                     .args(["install", "--id", "astral-sh.uv", "-e"])
                     .output()
                     .await
@@ -93,14 +93,14 @@ pub async fn install_uv() -> Result<String, String> {
             }
         }
         "macos" => {
-            let brew_installed = Command::new("brew")
+            let brew_installed = new_command("brew")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if brew_installed {
-                let uv_install_cmd = Command::new("brew")
+                let uv_install_cmd = new_command("brew")
                     .args(["install", "uv"])
                     .output()
                     .await
@@ -115,7 +115,7 @@ pub async fn install_uv() -> Result<String, String> {
                 Ok("SUCCESS".to_string())
             } else {
                 // Fallback to curl script for macOS if brew is not installed
-                let curl_install_cmd = Command::new("sh")
+                let curl_install_cmd = new_command("sh")
                     .arg("-c")
                     .arg("curl -LsSf https://astral.sh/uv/install.sh | sh")
                     .output()
@@ -144,14 +144,14 @@ pub async fn install_python() -> Result<String, String> {
 
     match os {
         "windows" => {
-            let winget_installed = Command::new("winget")
+            let winget_installed = new_command("winget")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if winget_installed {
-                let python_install_cmd = Command::new("winget")
+                let python_install_cmd = new_command("winget")
                     .args(["install", "--id", "Python.Python.3.10", "-e"]) // Targeting Python 3.10
                     .output()
                     .await
@@ -169,14 +169,14 @@ pub async fn install_python() -> Result<String, String> {
             }
         }
         "macos" => {
-            let brew_installed = Command::new("brew")
+            let brew_installed = new_command("brew")
                 .arg("--version")
                 .output()
                 .await
                 .map_or(false, |output| output.status.success());
 
             if brew_installed {
-                let python_install_cmd = Command::new("brew")
+                let python_install_cmd = new_command("brew")
                     .args(["install", "python@3.10"]) // Targeting Python 3.10
                     .output()
                     .await

@@ -1,5 +1,6 @@
 // src-tauri/src/commands/server.rs
 
+use super::command_utils::new_command;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::Path;
@@ -7,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command as TokioCommand};
+use tokio::process::Child;
 use tokio::time::sleep;
 
 // Define a struct to hold the child process, to be managed by Tauri State
@@ -57,7 +58,7 @@ pub async fn start_index_tts_server(
         ));
     }
 
-    let mut command = TokioCommand::new("uv");
+    let mut command = new_command("uv");
     command
         .arg("run")
         .arg("webui.py")
@@ -179,7 +180,7 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
     }
 
     // Fetch latest changes from remote
-    let fetch_output = TokioCommand::new("git")
+    let fetch_output = new_command("git")
         .arg("-C")
         .arg(&target_dir)
         .arg("fetch")
@@ -195,7 +196,7 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
     }
 
     // Get local HEAD commit hash
-    let local_hash_output = TokioCommand::new("git")
+    let local_hash_output = new_command("git")
         .arg("-C")
         .arg(&target_dir)
         .args(["log", "-n", "1", "--pretty=format:%H"])
@@ -214,7 +215,7 @@ pub async fn check_repo_update(target_dir: String) -> Result<RepoUpdateInfo, Str
         .to_string();
 
     // Get remote HEAD commit hash for the current branch
-    let remote_hash_output = TokioCommand::new("git")
+    let remote_hash_output = new_command("git")
         .arg("-C")
         .arg(&target_dir)
         .args(["log", "-n", "1", "--pretty=format:%H", "origin/main"]) // Assuming 'main' branch
@@ -254,7 +255,7 @@ pub async fn pull_repo(target_dir: String) -> Result<String, String> {
         return Err("Repository directory does not exist.".to_string());
     }
 
-    let pull_output = TokioCommand::new("git")
+    let pull_output = new_command("git")
         .arg("-C")
         .arg(&target_dir)
         .arg("pull")
@@ -301,7 +302,7 @@ async fn ensure_port_closed(port: u16) -> Result<(), String> {
 #[cfg(unix)]
 async fn force_kill_port(port: u16) -> Result<(), String> {
     let port_spec = format!(":{}", port);
-    let output = TokioCommand::new("lsof")
+    let output = new_command("lsof")
         .args(["-ti", &port_spec])
         .output()
         .await
@@ -322,7 +323,7 @@ async fn force_kill_port(port: u16) -> Result<(), String> {
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
     {
-        let kill_output = TokioCommand::new("kill")
+        let kill_output = new_command("kill")
             .args(["-9", pid])
             .output()
             .await
@@ -348,7 +349,7 @@ async fn force_kill_port(port: u16) -> Result<(), String> {
         "Get-NetTCPConnection -LocalPort {} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess",
         port
     );
-    let output = TokioCommand::new("powershell")
+    let output = new_command("powershell")
         .args(["-NoProfile", "-Command", &script])
         .output()
         .await
@@ -367,7 +368,7 @@ async fn force_kill_port(port: u16) -> Result<(), String> {
         .filter(|line| !line.is_empty())
     {
         killed_any = true;
-        let kill_output = TokioCommand::new("taskkill")
+        let kill_output = new_command("taskkill")
             .args(["/PID", pid, "/F"])
             .output()
             .await

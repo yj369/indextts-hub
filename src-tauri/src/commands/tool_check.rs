@@ -1,7 +1,7 @@
 // src-tauri/src/commands/tool_check.rs
 
+use super::command_utils::new_command;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolStatus {
@@ -14,7 +14,7 @@ pub struct ToolStatus {
 
 /// Checks if a command exists and runs successfully with a --version flag.
 async fn check_command(cmd_name: &str, version_arg: &str) -> bool {
-    let output = Command::new(cmd_name).arg(version_arg).output().await;
+    let output = new_command(cmd_name).arg(version_arg).output().await;
 
     match output {
         Ok(output) => output.status.success(),

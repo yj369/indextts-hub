@@ -1,8 +1,8 @@
 // src-tauri/src/commands/system_info.rs
 
+use super::command_utils::new_command;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Disks, System};
-use tokio::process::Command;
 
 // Re-using GpuInfo from index_tts.rs to avoid duplication
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
     let mut gpu_info: Option<GpuInfo> = None;
 
     // Attempt to detect NVIDIA GPU using nvidia-smi
-    let nvidia_smi_output = Command::new("nvidia-smi")
+    let nvidia_smi_output = new_command("nvidia-smi")
         .arg("--query-gpu=name,memory.total,driver_version")
         .arg("--format=csv,noheader")
         .output()

@@ -1,3 +1,4 @@
+pub mod command_utils;
 pub mod index_tts;
 pub mod install_tools;
 pub mod server;
