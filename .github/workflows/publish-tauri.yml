@@ -26,22 +26,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) 先装 Node（这里不再用 cache: 'pnpm'，避免需要提前有 pnpm）
+      # 1) 先装 Node（不再使用 cache）
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'          # 想要缓存就用 npm 的缓存，简单省心
 
       # 2) 用 npm 全局安装 pnpm
       - name: Install pnpm
         run: npm install -g pnpm
 
-      # 3) 安装依赖（等价于原来的 run_install: true）
+      # 3) 安装依赖（相当于原来的 run_install: true）
       - name: Install dependencies
         run: pnpm install
 
-      # Rust toolchain（默认安装当前平台的 stable 即可）
+      # 4) Rust toolchain（默认安装当前平台的 stable 即可）
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
