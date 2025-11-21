@@ -1,0 +1,79 @@
+name: publish tauri app
+
+on:
+  push:
+    branches:
+      - main     # 任何 merge / rebase 到 main 的 push 都会触发
+  workflow_dispatch:  # 允许在 Actions 页面手动点一发
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write   # 需要写权限来创建/更新 Release
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'   # 只构建 M 芯片版
+          - platform: windows-latest
+            args: ''                                # Windows x64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node + pnpm
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: true   # 自动 pnpm install
+
+      # Rust toolchain
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # Ubuntu（如果上面 matrix 包含）需要额外依赖
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      # 如果你没有在 tauri.conf.json 里配置 beforeBuildCommand，可以在这手动 build 前端
+      # - name: Build frontend
+      #   run: pnpm build
+
+      - name: Build & Release with Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__          # __VERSION__ 会被替换为 tauri 配置里的 version
+          releaseName: 'IndexTTS Hub v__VERSION__'
+          releaseBody: '请在 Assets 中下载对应平台安装包。'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
